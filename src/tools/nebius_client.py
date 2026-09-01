@@ -3,7 +3,7 @@ from openai import OpenAI
 
 ULTRA = "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1"
 SUPER = "nvidia/nemotron-3-super-120b-a12b"
-NANO  = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
+NANO  = "nvidia/Nemotron-3_5-Lightning"
 
 _client = None
 
