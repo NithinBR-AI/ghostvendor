@@ -1,6 +1,14 @@
+"""Entrypoint — GhostVendor autonomous dependency resilience engineer."""
+
 import argparse
+import sys
+from pathlib import Path
+
+# Add src/ to path so all internal imports resolve as bare module names
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 from dotenv import load_dotenv
-from src.pipeline.state_machine import StateMachine
+from pipeline.state_machine import StateMachine
 
 load_dotenv()
 

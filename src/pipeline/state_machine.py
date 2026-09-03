@@ -2,6 +2,9 @@ from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import Any
 
+from agents import detective
+from models.vendor_spec import VendorSpec
+
 
 class State(Enum):
     DISCOVER = auto()
@@ -17,7 +20,7 @@ class State(Enum):
 @dataclass
 class ArtifactStore:
     repo: str
-    vendor_spec: dict = field(default_factory=dict)
+    vendor_spec: VendorSpec | None = None
     evil_twin_code: str = ""
     security_decision: dict = field(default_factory=dict)
     resilience_tests: dict = field(default_factory=dict)
@@ -66,8 +69,14 @@ class StateMachine:
             self._validate()
 
     def _discover(self):
-        # Agent 1 + Agent 2 run here
-        self.transition(State.ATTACK)
+        try:
+            spec = detective.run(repo=self.artifacts.repo)
+            self.artifacts.vendor_spec = spec
+            vendors = [f"{v.name} (score={v.criticality_score})" for v in spec.vendors_by_criticality()]
+            print(f"[ghostvendor] Discovered vendors: {', '.join(vendors)}")
+            self.transition(State.ATTACK)
+        except Exception as e:
+            self.fail(f"Agent 1 (Detective) failed: {e}")
 
     def _attack(self):
         # Agent 3 (Context Guard gate) + Agent 4 (Verifier) + CI execution
