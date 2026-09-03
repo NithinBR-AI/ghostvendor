@@ -1,9 +1,10 @@
 from enum import Enum, auto
 from dataclasses import dataclass, field
-from typing import Any
 
-from agents import detective
+from agents import detective, twin_generator
+from agents.twin_generator import EvilTwinArtifact
 from models.vendor_spec import VendorSpec
+from tools.evil_twin_runner import EvilTwinManager
 
 
 class State(Enum):
@@ -21,7 +22,7 @@ class State(Enum):
 class ArtifactStore:
     repo: str
     vendor_spec: VendorSpec | None = None
-    evil_twin_code: str = ""
+    evil_twins: dict[str, EvilTwinArtifact] = field(default_factory=dict)
     security_decision: dict = field(default_factory=dict)
     resilience_tests: dict = field(default_factory=dict)
     ci_logs: str = ""
@@ -40,6 +41,7 @@ class StateMachine:
         self.state = State.DISCOVER
         self.artifacts = ArtifactStore(repo=repo)
         self.retry_count = 0
+        self.twin_manager = EvilTwinManager()
 
     def transition(self, next_state: State):
         print(f"[ghostvendor] {self.state.name} → {next_state.name}")
@@ -47,12 +49,16 @@ class StateMachine:
 
     def fail(self, reason: str):
         print(f"[ghostvendor] FAILED: {reason}")
+        self.twin_manager.stop_all()
         self.transition(State.FAILED)
 
     def run(self):
         print(f"[ghostvendor] Starting on repo: {self.artifacts.repo}")
-        while self.state not in (State.DONE, State.FAILED):
-            self._step()
+        try:
+            while self.state not in (State.DONE, State.FAILED):
+                self._step()
+        finally:
+            self.twin_manager.stop_all()
 
     def _step(self):
         if self.state == State.DISCOVER:
@@ -79,25 +85,30 @@ class StateMachine:
             self.fail(f"Agent 1 (Detective) failed: {e}")
 
     def _attack(self):
-        # Agent 3 (Context Guard gate) + Agent 4 (Verifier) + CI execution
-        self.transition(State.VERIFY)
+        try:
+            twins = twin_generator.run(self.artifacts.vendor_spec)
+            self.artifacts.evil_twins = twins
+            for name, artifact in twins.items():
+                print(f"[ghostvendor] Evil Twin generated: {name} → port {artifact.port}")
+            self.transition(State.VERIFY)
+        except Exception as e:
+            self.fail(f"Agent 2 (Twin Generator) failed: {e}")
 
     def _verify(self):
-        # Read CI results — did the app fail as expected?
+        # Agent 3 (Context Guard) + Agent 4 (Resilience Verifier) + CI dispatch — Phase 4
         self.transition(State.DIAGNOSE)
 
     def _diagnose(self):
-        # Agent 5 (Runtime Debugger)
+        # Agent 5 (Runtime Debugger) — Phase 5
         self.transition(State.REMEDIATE)
 
     def _remediate(self):
-        # Agent 6 (Patch Generator)
+        # Agent 6 (Patch Generator) — Phase 5
         self.transition(State.VALIDATE)
 
     def _validate(self):
-        # Rerun CI — did the patch fix it?
+        # Re-run CI — did the patch survive chaos? — Phase 5
         if self.retry_count < self.MAX_RETRIES:
-            # placeholder: assume pass for now
             self.transition(State.DONE)
         else:
             self.fail(f"Exceeded {self.MAX_RETRIES} remediation attempts")
