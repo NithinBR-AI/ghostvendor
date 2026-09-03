@@ -108,11 +108,12 @@ class EvilTwinProcess:
         Raises:
             RuntimeError: If the chaos activation request fails.
         """
-        payload: dict = {"mode": mode}
-        if duration_seconds is not None:
-            payload["duration_seconds"] = duration_seconds
-        if delay_seconds is not None:
-            payload["delay_seconds"] = delay_seconds
+        # Always send all fields — generated twins may declare them required in Pydantic models
+        payload: dict = {
+            "mode": mode,
+            "duration_seconds": duration_seconds,
+            "delay_seconds": delay_seconds,
+        }
 
         resp = requests.post(self.chaos_url, json=payload, timeout=5)
         if resp.status_code != 200:

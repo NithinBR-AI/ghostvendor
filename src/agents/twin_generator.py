@@ -19,7 +19,10 @@ from models.vendor_spec import Vendor, VendorSpec
 
 _SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "twin_generator.txt").read_text()
 
-# Port allocation: Stripe=8001, SendGrid=8002, others increment from 8003
+# Deterministic port assignment per vendor so Evil Twin URLs are predictable across runs.
+# The demo app's CI workflow and the state machine both need to know the port before the
+# twin starts — hardcoding well-known vendors avoids a runtime port-negotiation step.
+# Unknown vendors start at 8010 and increment to avoid collisions with reserved ports.
 _VENDOR_PORTS: dict[str, int] = {
     "stripe": 8001,
     "sendgrid": 8002,
@@ -27,7 +30,7 @@ _VENDOR_PORTS: dict[str, int] = {
     "auth0": 8004,
     "slack": 8005,
 }
-_DEFAULT_PORT_START = 8010
+_DEFAULT_PORT_START = 8010  # Unknown vendors allocated from here upward
 
 
 def _assign_port(vendor_name: str, existing_ports: set[int]) -> int:
@@ -130,7 +133,23 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     if not code:
         raise ValueError(f"Agent 2 returned empty output for vendor: {vendor.name}")
 
-    _validate_syntax(code, vendor.name)
+    # Auto-repair: retry once with the syntax error as context
+    for attempt in range(2):
+        try:
+            _validate_syntax(code, vendor.name)
+            return code
+        except ValueError as e:
+            if attempt == 1:
+                raise
+            repair_prompt = (
+                f"The following Python code has a syntax error:\n\n{code}\n\n"
+                f"Error: {e}\n\n"
+                f"Fix the syntax error and output ONLY the corrected Python source code. "
+                f"No explanation, no markdown fences."
+            )
+            raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=repair_prompt, temperature=0.1)
+            code = _clean_output(raw)
+
     return code
 
 

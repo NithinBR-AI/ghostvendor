@@ -14,6 +14,7 @@ A single Python file that:
 1. Mocks every endpoint listed in the vendor spec with realistic success responses
 2. Supports configurable failure injection via a /chaos control endpoint:
    - POST /chaos {"mode": "<mode>", "duration_seconds": <int|null>, "delay_seconds": <int|null>} → activates failure
+     ALL fields except `mode` are optional (default null). Never mark them required in Pydantic models.
    - DELETE /chaos → clears failure, returns to normal behavior
    - GET /chaos → returns current failure state {"active": bool, "mode": str|null}
 3. Implements these failure modes:
