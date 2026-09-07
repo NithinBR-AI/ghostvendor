@@ -7,3 +7,4 @@ __pycache__/
 .coverage
 dist/
 .idea/
+sandbox_smoke_test.py

@@ -30,7 +30,7 @@ def _is_interesting(path: str) -> bool:
     if any(p in _INTERESTING_PATHS for p in parts):
         return True
     name = Path(path).stem.lower()
-    return any(kw in name for kw in ("client", "stripe", "sendgrid", "twilio", "vendor", "api"))
+    return any(kw in name for kw in ("client", "vendor", "api", "integration", "service", "provider", "gateway"))
 
 
 def _collect_source_files(repo_path: str, local: bool = False) -> dict[str, str]:
