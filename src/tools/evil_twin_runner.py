@@ -10,12 +10,15 @@ the process lifecycle and exposes a clean API for the state machine to:
   - stop the twin
 """
 
+import logging
 import os
 import subprocess
 import sys
 import time
 import tempfile
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import requests
 
@@ -61,21 +64,20 @@ class EvilTwinProcess:
         self._work_dir = tempfile.mkdtemp(prefix=f"ghostvendor_twin_{self.vendor_name.lower()}_")
         twin_file = Path(self._work_dir) / f"{self._module_name}.py"
         twin_file.write_text(self.code, encoding="utf-8")
+        logger.debug("%s: written to %s", self.vendor_name, twin_file)
 
+        cmd = [sys.executable, "-m", "uvicorn", f"{self._module_name}:app", "--port", str(self.port), "--log-level", "warning"]
+        logger.info("%s: launching %s in %s", self.vendor_name, cmd, self._work_dir)
         self._process = subprocess.Popen(
-            [
-                sys.executable, "-m", "uvicorn",
-                f"{self._module_name}:app",
-                "--port", str(self.port),
-                "--log-level", "warning",
-            ],
+            cmd,
             cwd=self._work_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env={**os.environ, "PYTHONPATH": self._work_dir},
         )
-
+        logger.info("%s: PID=%d, waiting for health...", self.vendor_name, self._process.pid)
         self._wait_for_health()
+        logger.info("%s: healthy on port %d", self.vendor_name, self.port)
 
     def _wait_for_health(self) -> None:
         """Poll /health until the twin responds or timeout is reached."""
@@ -108,14 +110,20 @@ class EvilTwinProcess:
         Raises:
             RuntimeError: If the chaos activation request fails.
         """
-        # Always send all fields — generated twins may declare them required in Pydantic models
+        # Always send all fields — generated twins may declare them required in Pydantic models.
+        # For timeout mode: default delay_seconds to 30 so the app request actually times out.
+        # Twins must treat null delay_seconds the same way (default 30) per the generation prompt.
+        if mode == "timeout" and delay_seconds is None:
+            delay_seconds = 30
         payload: dict = {
             "mode": mode,
             "duration_seconds": duration_seconds,
             "delay_seconds": delay_seconds,
         }
 
+        logger.info("%s: POST %s mode=%s", self.vendor_name, self.chaos_url, mode)
         resp = requests.post(self.chaos_url, json=payload, timeout=5)
+        logger.info("%s: chaos activate → %d %r", self.vendor_name, resp.status_code, resp.text[:80])
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to activate chaos mode '{mode}' on {self.vendor_name} twin: "
@@ -124,7 +132,9 @@ class EvilTwinProcess:
 
     def clear_chaos(self) -> None:
         """Return the twin to normal mode."""
+        logger.info("%s: DELETE %s", self.vendor_name, self.chaos_url)
         resp = requests.delete(self.chaos_url, timeout=5)
+        logger.info("%s: chaos clear → %d", self.vendor_name, resp.status_code)
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to clear chaos on {self.vendor_name} twin: HTTP {resp.status_code}"
@@ -144,14 +154,28 @@ class EvilTwinProcess:
             return False
 
     def stop(self) -> None:
-        """Terminate the Evil Twin subprocess and clean up temp files."""
+        """Terminate the Evil Twin subprocess and wait for the port to be released."""
         if self._process:
             self._process.terminate()
             try:
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._process.kill()
+                self._process.wait(timeout=3)
             self._process = None
+        self._wait_for_port_free()
+
+    def _wait_for_port_free(self, timeout: float = 8.0) -> None:
+        """Poll until the port is no longer bound — Windows holds ports briefly after process exit."""
+        import socket
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.3)
+                if s.connect_ex(("localhost", self.port)) != 0:
+                    return  # port is free
+            time.sleep(0.3)
+        logger.warning("%s: port %d still bound after %.1fs — proceeding anyway", self.vendor_name, self.port, timeout)
 
     def __repr__(self) -> str:
         return f"EvilTwinProcess(vendor={self.vendor_name}, port={self.port})"
@@ -183,7 +207,7 @@ class EvilTwinManager:
         twin = EvilTwinProcess(vendor_name=vendor_name, port=port, code=code)
         twin.start()
         self._twins[vendor_name] = twin
-        print(f"[ghostvendor] Evil Twin for {vendor_name} running on port {port}")
+        logger.info("Evil Twin for %s running on port %d", vendor_name, port)
         return twin
 
     def get(self, vendor_name: str) -> EvilTwinProcess | None:

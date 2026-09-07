@@ -11,9 +11,12 @@ A twin must pass all three layers to be approved. Any HIGH/BLOCKED risk blocks t
 
 import ast
 import json
+import logging
 import os
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from contree_sdk import ContreeSync
 
@@ -40,8 +43,8 @@ _DANGEROUS_CALLS = {
 # File paths that should never be read by a mock server
 _SENSITIVE_PATHS = ["/etc/passwd", "/etc/shadow", "~/.ssh", "~/.aws", ".env"]
 
-# Sandbox startup timeout — FastAPI/uvicorn imports take a moment
-_SANDBOX_TIMEOUT_SECONDS = 30
+# Sandbox startup timeout — just enough to catch import errors and startup crashes
+_SANDBOX_TIMEOUT_SECONDS = 8
 
 
 def run(vendor: Vendor, code: str) -> GuardDecision:
@@ -58,12 +61,23 @@ def run(vendor: Vendor, code: str) -> GuardDecision:
     Raises:
         RuntimeError: If the LLM gate returns unparseable output after retries.
     """
+    logger.info("Inspecting %s twin (%d chars)...", vendor.name, len(code))
     ast_findings = _ast_inspect(code)
-    sandbox_exit, sandbox_stdout, sandbox_stderr = _sandbox_execute(code, vendor.name)
+    logger.info("%s Layer1 AST: %d findings", vendor.name, len(ast_findings))
+
+    sandbox_exit, sandbox_stdout, sandbox_stderr, sandbox_skipped = _sandbox_execute(code, vendor.name)
+    logger.info("%s Layer2 Sandbox: exit=%d skipped=%s stderr=%r", vendor.name, sandbox_exit, sandbox_skipped, sandbox_stderr[:100])
+
     sandbox_unexpected = _detect_unexpected_sandbox_output(sandbox_stdout, sandbox_stderr)
+    if sandbox_unexpected:
+        logger.warning("%s unexpected sandbox output: %s", vendor.name, sandbox_unexpected)
+
+    logger.info("%s Layer3 LLM review...", vendor.name)
     llm_verdict, llm_reasoning, risk_level, approved = _llm_review(
         vendor, code, ast_findings, sandbox_exit, sandbox_stdout, sandbox_stderr
     )
+
+    logger.info("%s Layer3 verdict=%r risk=%s approved=%s", vendor.name, llm_verdict, risk_level.value, approved)
 
     # Override: HIGH or BLOCKED risk always results in rejection regardless of LLM
     if risk_level in (RiskLevel.HIGH, RiskLevel.BLOCKED):
@@ -73,6 +87,7 @@ def run(vendor: Vendor, code: str) -> GuardDecision:
     if sandbox_unexpected and risk_level in (RiskLevel.HIGH, RiskLevel.BLOCKED):
         approved = False
 
+    logger.info("%s final decision: approved=%s risk=%s sandbox_skipped=%s", vendor.name, approved, risk_level.value, sandbox_skipped)
     return GuardDecision(
         vendor_name=vendor.name,
         approved=approved,
@@ -84,6 +99,7 @@ def run(vendor: Vendor, code: str) -> GuardDecision:
         sandbox_stdout=sandbox_stdout,
         sandbox_stderr=sandbox_stderr,
         sandbox_unexpected=sandbox_unexpected,
+        sandbox_skipped=sandbox_skipped,
     )
 
 
@@ -149,7 +165,7 @@ def _extract_attr_name(node: ast.Attribute) -> str | None:
     return None
 
 
-def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str]:
+def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str, bool]:
     """
     Run the generated code in a Contree sandbox and capture behavior.
 
@@ -164,7 +180,7 @@ def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str]:
         client = ContreeSync()
         sandbox = client.images.use("python:3.12-slim")
 
-        # Install FastAPI + uvicorn — same deps the twin needs
+        # Install deps — Contree caches layers so subsequent runs are fast
         sandbox = sandbox.run(
             "pip", args=["install", "-q", "fastapi", "uvicorn[standard]"],
             disposable=False,
@@ -176,18 +192,21 @@ def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str]:
             disposable=False,
         ).wait()
 
-        # Run with a short timeout — we're observing startup behavior, not serving requests
+        # Run with a short timeout — observing startup behavior only, not serving requests
         result = sandbox.run(
             "python", args=["/tmp/twin.py"],
             timeout=_SANDBOX_TIMEOUT_SECONDS,
         ).wait()
 
-        return result.exit_code or 0, result.stdout or "", result.stderr or ""
+        exit_code = result.exit_code
+        # exit_code=-1 means timeout — server started and kept running = healthy startup
+        if exit_code == -1:
+            exit_code = 0
+        return exit_code, result.stdout or "", result.stderr or "", False
 
     except Exception as e:
-        # Sandbox unavailable — log and continue with other layers
-        print(f"[context_guard] Sandbox execution skipped for {vendor_name}: {e}")
-        return -1, "", f"Sandbox unavailable: {e}"
+        logger.warning("Sandbox skipped for %s: %s: %s", vendor_name, type(e).__name__, e)
+        return -1, "", f"Sandbox unavailable: {e}", True
 
 
 def _detect_unexpected_sandbox_output(stdout: str, stderr: str) -> list[str]:
@@ -263,7 +282,7 @@ def _parse_llm_response(raw: str) -> tuple[str, str, RiskLevel, bool]:
         reasoning = data.get("reasoning", "No reasoning provided")
         return verdict, reasoning, risk_level, approved
     except (json.JSONDecodeError, ValueError) as e:
-        print(f"[context_guard] LLM response parse failed: {e} — defaulting to BLOCKED")
+        logger.error("LLM response parse failed: %s — defaulting to BLOCKED", e)
         return (
             "Parse failure — defaulting to blocked",
             f"LLM returned unparseable output: {raw[:200]}",

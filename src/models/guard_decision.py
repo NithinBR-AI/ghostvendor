@@ -29,13 +29,15 @@ class GuardDecision(BaseModel):
     sandbox_stdout: str = ""
     sandbox_stderr: str = ""
     sandbox_unexpected: list[str] = []
+    sandbox_skipped: bool = False
 
     @property
     def summary(self) -> str:
         status = "APPROVED" if self.approved else "BLOCKED"
         findings = len(self.ast_findings)
         unexpected = len(self.sandbox_unexpected)
+        sandbox_note = " | sandbox=SKIPPED" if self.sandbox_skipped else ""
         return (
             f"{self.vendor_name}: {status} | risk={self.risk_level.value} | "
-            f"ast_findings={findings} | sandbox_unexpected={unexpected}"
+            f"ast_findings={findings} | sandbox_unexpected={unexpected}{sandbox_note}"
         )

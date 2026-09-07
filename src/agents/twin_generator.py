@@ -10,8 +10,11 @@ for Agent 3 (Context Guard) to inspect before execution.
 """
 
 import json
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from tools import nebius_client
 from models.vendor_spec import Vendor, VendorSpec
@@ -89,7 +92,9 @@ def run(spec: VendorSpec) -> dict[str, "EvilTwinArtifact"]:
         port = _assign_port(vendor.name, used_ports)
         used_ports.add(port)
 
+        logger.info("Generating Evil Twin for %s on port %d...", vendor.name, port)
         code = _generate_twin(vendor, spec.repository, port)
+        logger.info("%s: %d chars, uvicorn.run pattern fixed=%s", vendor.name, len(code), 'uvicorn.run(app' in code)
         artifacts[vendor.name] = EvilTwinArtifact(
             vendor_name=vendor.name,
             port=port,
@@ -133,6 +138,11 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     if not code:
         raise ValueError(f"Agent 2 returned empty output for vendor: {vendor.name}")
 
+    # Deterministic fix: ensure uvicorn.run uses the app object, not a string module reference.
+    # LLMs sometimes generate uvicorn.run("module_name:app", ...) which breaks when the file
+    # is saved under a different name (e.g. /tmp/twin.py in the Contree sandbox).
+    code = _fix_uvicorn_run(code)
+
     # Auto-repair: retry once with the syntax error as context
     for attempt in range(2):
         try:
@@ -151,6 +161,18 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
             code = _clean_output(raw)
 
     return code
+
+
+def _fix_uvicorn_run(code: str) -> str:
+    """
+    Replace uvicorn.run("module:app", ...) with uvicorn.run(app, ...).
+    LLMs generate string references that break when the file is saved under a different name.
+    """
+    return re.sub(
+        r'uvicorn\.run\(\s*["\'][^"\']+:app["\']',
+        'uvicorn.run(app',
+        code,
+    )
 
 
 def _validate_syntax(code: str, vendor_name: str) -> None:

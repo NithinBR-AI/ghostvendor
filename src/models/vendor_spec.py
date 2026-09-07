@@ -1,7 +1,6 @@
 """Pydantic schema for vendor_spec.json — the central data contract between all agents."""
 
 from enum import Enum
-from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -17,12 +16,6 @@ class NormalContract(BaseModel):
     response_type: str
 
 
-class ChaosScenario(BaseModel):
-    mode: str
-    duration_seconds: int | None = None
-    delay_seconds: int | None = None
-
-
 class ExpectedResilience(BaseModel):
     graceful_degradation: bool
     max_retry_attempts: int
@@ -34,7 +27,6 @@ class Endpoint(BaseModel):
     method: str
     criticality: Criticality
     normal_contract: NormalContract
-    chaos_scenarios: list[ChaosScenario]
     expected_resilience: ExpectedResilience
 
 
@@ -43,6 +35,7 @@ class Vendor(BaseModel):
     criticality: Criticality
     criticality_score: int = Field(ge=0, le=100)
     base_url_env: str
+    app_route: str
     endpoints: list[Endpoint]
 
 

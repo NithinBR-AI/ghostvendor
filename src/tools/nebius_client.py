@@ -1,5 +1,8 @@
+import logging
 import os
 from openai import OpenAI, APIError
+
+logger = logging.getLogger(__name__)
 
 # Primary models — all NVIDIA via Nebius Token Factory
 ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
@@ -40,7 +43,7 @@ def _call_with_fallback(primary: str, fallback: str, system: str, user: str, tem
     try:
         return call(primary, system, user, temperature)
     except APIError as e:
-        print(f"[nebius_client] {primary} failed ({e}), falling back to {fallback}")
+        logger.warning("%s failed (%s), falling back to %s", primary, e, fallback)
         return call(fallback, system, user, temperature)
 
 

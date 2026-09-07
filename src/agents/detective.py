@@ -9,8 +9,11 @@ The LLM enriches what the AST proves — it never invents a dependency.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from tools.ast_scanner import scan_directory, scan_result_to_dict
 from tools.github_client import get_repo, get_tree, get_file
@@ -72,7 +75,7 @@ def _collect_source_files(repo_path: str, local: bool = False) -> dict[str, str]
     return files
 
 
-def run(repo: str, local_path: str | None = None) -> VendorSpec:
+def run(repo: str, local_path: str | None = None) -> tuple[VendorSpec, dict[str, str]]:
     """
     Run Agent 1 — discover vendors, enrich semantically, return a validated VendorSpec.
 
@@ -88,18 +91,22 @@ def run(repo: str, local_path: str | None = None) -> VendorSpec:
         ValueError: If the LLM response cannot be parsed or validated.
     """
     scan_root = local_path if local_path else _clone_or_fetch(repo)
+    logger.info("scan_root=%s", scan_root)
 
     # Layer 1: deterministic AST scan
     scan_result = scan_directory(scan_root)
     ast_findings = scan_result_to_dict(scan_result)
+    logger.info("AST scan: %d HTTP calls, %d env vars", len(ast_findings.get('http_calls', [])), len(ast_findings.get('env_vars', [])))
 
     if not ast_findings["http_calls"]:
         raise ValueError(f"No outbound HTTP calls found in {repo}. Nothing to attack.")
 
     # Collect source files for LLM context
     source_files = _collect_source_files(scan_root, local=True)
+    logger.info("Source files collected (%d): %s", len(source_files), list(source_files.keys()))
 
     # Layer 2: LLM semantic enrichment
+    logger.info("Calling Ultra for vendor enrichment...")
     user_message = json.dumps({
         "repository": repo,
         "ast_findings": ast_findings,
@@ -130,7 +137,10 @@ def run(repo: str, local_path: str | None = None) -> VendorSpec:
     except Exception as e:
         raise ValueError(f"Agent 1 output failed schema validation: {e}\n\nData:\n{data}") from e
 
-    return spec
+    logger.info("Discovered %d vendors:", len(spec.discovered_vendors))
+    for v in spec.discovered_vendors:
+        logger.info("  %s: criticality=%d, base_url_env=%s, app_route=%s, endpoints=%d", v.name, v.criticality_score, v.base_url_env, v.app_route, len(v.endpoints))
+    return spec, source_files
 
 
 def _clone_or_fetch(repo: str) -> str:

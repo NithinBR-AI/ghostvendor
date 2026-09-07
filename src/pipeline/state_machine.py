@@ -1,11 +1,16 @@
+import logging
 from enum import Enum, auto
 from dataclasses import dataclass, field
 
-from agents import detective, twin_generator, context_guard
+logger = logging.getLogger(__name__)
+
+from agents import detective, twin_generator, context_guard, resilience_verifier
 from agents.twin_generator import EvilTwinArtifact
 from models.guard_decision import GuardDecision
+from models.resilience_result import ResilienceReport
 from models.vendor_spec import VendorSpec
 from tools.evil_twin_runner import EvilTwinManager
+from tools.repo_cloner import clone as clone_repo, RepoInfo
 
 
 class State(Enum):
@@ -23,9 +28,12 @@ class State(Enum):
 @dataclass
 class ArtifactStore:
     repo: str
+    repo_info: RepoInfo | None = None
     vendor_spec: VendorSpec | None = None
+    source_files: dict[str, str] = field(default_factory=dict)
     evil_twins: dict[str, EvilTwinArtifact] = field(default_factory=dict)
     guard_decisions: dict[str, GuardDecision] = field(default_factory=dict)
+    resilience_report: ResilienceReport | None = None
     ci_run_id: int | None = None
     ci_logs: str = ""
     root_cause: dict = field(default_factory=dict)
@@ -47,16 +55,16 @@ class StateMachine:
         self.twin_manager = EvilTwinManager()
 
     def transition(self, next_state: State) -> None:
-        print(f"[ghostvendor] {self.state.name} → {next_state.name}")
+        logger.info("%s → %s", self.state.name, next_state.name)
         self.state = next_state
 
     def fail(self, reason: str) -> None:
-        print(f"[ghostvendor] FAILED: {reason}")
+        logger.error("FAILED: %s", reason)
         self.twin_manager.stop_all()
         self.transition(State.FAILED)
 
     def run(self) -> None:
-        print(f"[ghostvendor] Starting on repo: {self.artifacts.repo}")
+        logger.info("Starting on repo: %s", self.artifacts.repo)
         try:
             while self.state not in (State.DONE, State.FAILED):
                 self._step()
@@ -81,10 +89,15 @@ class StateMachine:
 
     def _discover(self) -> None:
         try:
-            spec = detective.run(repo=self.artifacts.repo)
+            repo_info = clone_repo(self.artifacts.repo)
+            self.artifacts.repo_info = repo_info
+            logger.info("Repo available at: %s (port=%d)", repo_info.local_path, repo_info.port)
+
+            spec, source_files = detective.run(repo=self.artifacts.repo, local_path=repo_info.local_path)
             self.artifacts.vendor_spec = spec
+            self.artifacts.source_files = source_files
             vendors = [f"{v.name} (score={v.criticality_score})" for v in spec.vendors_by_criticality()]
-            print(f"[ghostvendor] Discovered vendors: {', '.join(vendors)}")
+            logger.info("Discovered vendors: %s", ', '.join(vendors))
             self.transition(State.ATTACK)
         except Exception as e:
             self.fail(f"Agent 1 (Detective) failed: {e}")
@@ -94,7 +107,7 @@ class StateMachine:
             twins = twin_generator.run(self.artifacts.vendor_spec)
             self.artifacts.evil_twins = twins
             for name, artifact in twins.items():
-                print(f"[ghostvendor] Evil Twin generated: {name} → port {artifact.port}")
+                logger.info("Evil Twin generated: %s → port %d", name, artifact.port)
             self.transition(State.GUARD)
         except Exception as e:
             self.fail(f"Agent 2 (Twin Generator) failed: {e}")
@@ -110,7 +123,10 @@ class StateMachine:
                 )
                 decision = context_guard.run(vendor=vendor, code=artifact.code)
                 self.artifacts.guard_decisions[name] = decision
-                print(f"[ghostvendor] Context Guard: {decision.summary}")
+                logger.info("Context Guard: %s", decision.summary)
+
+                if decision.sandbox_skipped:
+                    logger.warning("Sandbox skipped for %s — approved on AST+LLM only", name)
 
                 if not decision.approved:
                     blocked.append(f"{name} ({decision.risk_level.value}: {decision.llm_verdict})")
@@ -124,8 +140,21 @@ class StateMachine:
             self.fail(f"Agent 3 (Context Guard) failed: {e}")
 
     def _verify(self) -> None:
-        # Agent 4 (Resilience Verifier) — launch twins, inject chaos, dispatch CI — Phase 4
-        self.transition(State.DIAGNOSE)
+        """Agent 4: launch approved twins, inject chaos, observe real app behavior."""
+        try:
+            report = resilience_verifier.run(
+                spec=self.artifacts.vendor_spec,
+                evil_twins=self.artifacts.evil_twins,
+                twin_manager=self.twin_manager,
+                repo_info=self.artifacts.repo_info,
+                source_files=self.artifacts.source_files,
+            )
+            self.artifacts.resilience_report = report
+            self.artifacts.resilience_score_before = report.overall_score
+            logger.info("Resilience score BEFORE patch: %d/100 | Failures: %d", report.overall_score, len(report.all_failed_scenarios))
+            self.transition(State.DIAGNOSE)
+        except Exception as e:
+            self.fail(f"Agent 4 (Resilience Verifier) failed: {e}")
 
     def _diagnose(self) -> None:
         # Agent 5 (Runtime Debugger) — Phase 5
