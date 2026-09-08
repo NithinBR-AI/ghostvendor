@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from tools.ast_scanner import scan_directory, scan_result_to_dict
 from tools.github_client import get_repo, get_tree, get_file
-from tools import nebius_client
+from utils import nebius_client
 from models.vendor_spec import VendorSpec
 
 

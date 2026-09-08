@@ -15,8 +15,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-from tools import nebius_client
-from tools.nebius_client import strip_llm_wrapper
+from utils import nebius_client
+from utils.nebius_client import strip_llm_wrapper
 from models.resilience_result import ResilienceReport, ScenarioResult
 from models.diagnosis import DiagnosisReport, DiagnosisResult
 

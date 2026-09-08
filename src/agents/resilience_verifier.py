@@ -36,8 +36,8 @@ from models.resilience_result import (
 from tools.evil_twin_runner import EvilTwinManager, EvilTwinProcess
 from tools.demo_app_runner import DemoAppProcess
 from tools.repo_cloner import RepoInfo
-from tools import nebius_client
-from tools.nebius_client import strip_llm_wrapper
+from utils import nebius_client
+from utils.nebius_client import strip_llm_wrapper
 from agents.twin_generator import EvilTwinArtifact
 
 

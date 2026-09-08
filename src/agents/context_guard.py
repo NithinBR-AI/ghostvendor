@@ -22,7 +22,7 @@ from contree_sdk import ContreeSync
 
 from models.guard_decision import ASTFinding, GuardDecision, RiskLevel
 from models.vendor_spec import Vendor
-from tools import nebius_client
+from utils import nebius_client
 
 
 _SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "context_guard.txt").read_text()

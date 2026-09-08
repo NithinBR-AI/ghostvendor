@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
 from pipeline.state_machine import StateMachine
-from tools.logging_config import configure as configure_logging
+from utils.logging_config import configure as configure_logging
 
 load_dotenv()
 

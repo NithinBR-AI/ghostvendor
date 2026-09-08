@@ -90,12 +90,13 @@ ghostvendor/
 │   ├── pipeline/
 │   │   └── state_machine.py         # State transitions, retry logic, artifact store
 │   ├── tools/
-│   │   ├── nebius_client.py         # Nemotron Ultra/Super/Nano via Nebius Token Factory
 │   │   ├── evil_twin_runner.py      # Evil Twin subprocess lifecycle (start/chaos/stop)
 │   │   ├── demo_app_runner.py       # Demo app subprocess lifecycle
 │   │   ├── repo_cloner.py           # Clone repo, detect startup command + port
 │   │   ├── ast_scanner.py           # Deterministic HTTP call + env var extraction
-│   │   ├── github_client.py         # GitHub API — branch, PR, workflow dispatch
+│   │   └── github_client.py         # GitHub API — branch, PR, workflow dispatch
+│   ├── utils/
+│   │   ├── nebius_client.py         # Nemotron Ultra/Super/Nano via Nebius Token Factory
 │   │   └── logging_config.py        # Structured logging setup
 │   ├── models/
 │   │   ├── vendor_spec.py           # VendorSpec / VendorInfo schema
@@ -103,7 +104,12 @@ ghostvendor/
 │   │   ├── diagnosis.py             # DiagnosisResult / DiagnosisReport schema
 │   │   ├── patch.py                 # PatchResult / PatchReport schema
 │   │   └── guard_decision.py        # GuardDecision schema
-│   └── prompts/                     # Agent system prompts (one .txt per agent)
+│   └── prompts/
+│       ├── detective.txt            # Agent 1 system prompt
+│       ├── twin_generator.txt       # Agent 2 system prompt
+│       ├── context_guard.txt        # Agent 3 system prompt
+│       ├── resilience_verifier.txt  # Agent 4 system prompt
+│       └── runtime_debugger.txt     # Agent 5 system prompt
 ├── tests/
 ├── pyproject.toml
 └── .env.example

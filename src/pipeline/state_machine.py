@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-from agents import detective, twin_generator, context_guard, resilience_verifier
+from agents import detective, twin_generator, context_guard, resilience_verifier, runtime_debugger
 from agents.twin_generator import EvilTwinArtifact
+from models.diagnosis import DiagnosisReport
 from models.guard_decision import GuardDecision
 from models.resilience_result import ResilienceReport
 from models.vendor_spec import VendorSpec
@@ -39,6 +40,7 @@ class ArtifactStore:
     root_cause: dict = field(default_factory=dict)
     patch: dict = field(default_factory=dict)
     patch_branch: str = ""
+    diagnosis_report: DiagnosisReport | None = None
     resilience_score_before: int = 0
     resilience_score_after: int = 0
     pr_url: str = ""
@@ -157,8 +159,23 @@ class StateMachine:
             self.fail(f"Agent 4 (Resilience Verifier) failed: {e}")
 
     def _diagnose(self) -> None:
-        # Agent 5 (Runtime Debugger) — Phase 5
-        self.transition(State.REMEDIATE)
+        try:
+            report = runtime_debugger.run(
+                report=self.artifacts.resilience_report,
+                source_files=self.artifacts.source_files,
+            )
+            self.artifacts.diagnosis_report = report
+            for d in report.diagnoses:
+                logger.info(
+                    "Diagnosis: %s | patterns=%s | strategy=%s | file=%s",
+                    d.vendor,
+                    [p.value for p in d.patterns],
+                    d.fix_strategy.value,
+                    d.affected_file,
+                )
+            self.transition(State.REMEDIATE)
+        except Exception as e:
+            self.fail(f"Agent 5 (Runtime Debugger) failed: {e}")
 
     def _remediate(self) -> None:
         # Agent 6 (Patch Generator) — Phase 5
