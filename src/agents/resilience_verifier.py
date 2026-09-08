@@ -37,6 +37,7 @@ from tools.evil_twin_runner import EvilTwinManager, EvilTwinProcess
 from tools.demo_app_runner import DemoAppProcess
 from tools.repo_cloner import RepoInfo
 from tools import nebius_client
+from tools.nebius_client import strip_llm_wrapper
 from agents.twin_generator import EvilTwinArtifact
 
 
@@ -141,7 +142,7 @@ def _synthesize_payload(vendor: Vendor, source_files: dict[str, str]) -> dict:
 
     try:
         raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.1)
-        raw = _strip_llm_wrapper(raw)
+        raw = strip_llm_wrapper(raw)
         result = json.loads(raw)
         payload = result.get("payload", result)
         if isinstance(payload, dict):
@@ -244,7 +245,7 @@ def _plan_attack(vendor: Vendor, baseline_observations: list[dict]) -> list[dict
 
     try:
         raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.2)
-        raw = _strip_llm_wrapper(raw)
+        raw = strip_llm_wrapper(raw)
         plan = json.loads(raw)
         return plan["attack_plan"]
     except Exception as e:
@@ -345,7 +346,7 @@ def _decide_next(
 
     try:
         raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.1)
-        raw = _strip_llm_wrapper(raw)
+        raw = strip_llm_wrapper(raw)
         return json.loads(raw)
     except Exception as e:
         logger.warning("Mid-attack decision LLM failed (%s), continuing", e)
@@ -512,16 +513,6 @@ def _observe(mode: str, vendor: Vendor, app: DemoAppProcess, payload: dict, base
         )
 
 
-def _strip_llm_wrapper(raw: str) -> str:
-    raw = raw.strip()
-    if "<think>" in raw and "</think>" in raw:
-        raw = raw[raw.index("</think>") + len("</think>"):].strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    return raw
 
 
 def _fake_credentials(spec: VendorSpec) -> dict[str, str]:

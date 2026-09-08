@@ -57,3 +57,16 @@ def super_(system: str, user: str, temperature: float = 0.2) -> str:
 
 def nano(system: str, user: str, temperature: float = 0.2) -> str:
     return _call_with_fallback(NANO, _NANO_FALLBACK, system, user, temperature)
+
+
+def strip_llm_wrapper(raw: str) -> str:
+    """Strip <think> blocks and markdown fences from LLM output."""
+    raw = raw.strip()
+    if "<think>" in raw and "</think>" in raw:
+        raw = raw[raw.index("</think>") + len("</think>"):].strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    return raw

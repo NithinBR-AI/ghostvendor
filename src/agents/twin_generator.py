@@ -17,6 +17,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from tools import nebius_client
+from tools.nebius_client import strip_llm_wrapper
 from models.vendor_spec import Vendor, VendorSpec
 
 
@@ -47,7 +48,7 @@ def _assign_port(vendor_name: str, existing_ports: set[int]) -> int:
     return port
 
 
-def _clean_output(raw: str) -> str:
+def _strip_python_fences(raw: str) -> str:
     """
     Strip any chain-of-thought blocks or markdown fences from model output.
     The prompt instructs output-only Python, but models sometimes add wrappers.
@@ -129,11 +130,11 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     # Ultra is primary for twin generation — produces better code and is more reliable.
     # Super is the fallback.
     raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.2)
-    code = _clean_output(raw)
+    code = _strip_python_fences(raw)
 
     if not code:
         raw = nebius_client.super_(system=_SYSTEM_PROMPT, user=user_message, temperature=0.2)
-        code = _clean_output(raw)
+        code = _strip_python_fences(raw)
 
     if not code:
         raise ValueError(f"Agent 2 returned empty output for vendor: {vendor.name}")
@@ -158,7 +159,7 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
                 f"No explanation, no markdown fences."
             )
             raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=repair_prompt, temperature=0.1)
-            code = _clean_output(raw)
+            code = _strip_python_fences(raw)
 
     return code
 

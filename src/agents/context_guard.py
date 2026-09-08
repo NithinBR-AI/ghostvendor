@@ -3,8 +3,8 @@ Agent 3 — Context Guard.
 
 Three-layer validation gate for every generated Evil Twin before it runs locally:
   Layer 1: Deterministic AST inspection — catches dangerous patterns without LLM involvement
-  Layer 2: LLM security review (Nemotron Nano) — structured verdict with reasoning
-  Layer 3: Contree sandbox execution — behavioral observation, catches runtime surprises
+  Layer 2: Contree sandbox execution — behavioral observation, catches runtime surprises
+  Layer 3: LLM security review (Nemotron Ultra) — structured verdict with full context
 
 A twin must pass all three layers to be approved. Any HIGH/BLOCKED risk blocks the pipeline.
 """

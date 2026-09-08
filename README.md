@@ -18,7 +18,7 @@ Six specialized agents run an autonomous closed loop:
 |---|---|---|---|
 | 1 | Vendor & Repository Detective | Nemotron Ultra | AST scan + LLM enrichment — discovers vendors, scores criticality, builds `vendor_spec` |
 | 2 | Adversarial Twin Generator | Nemotron Super | Generates Evil Twin — stateful FastAPI mock server with 5 chaos modes per vendor |
-| 3 | Context Guard | Nemotron Ultra | Security gate — AST inspection + Contree sandbox execution + LLM policy review |
+| 3 | Context Guard | Nemotron Ultra | Security gate — AST inspection → Contree sandbox execution → LLM policy review (3 layers, in order) |
 | 4 | Resilience Verifier | Nemotron Ultra | Launches twins locally, injects chaos, runs demo app, scores resilience 0–100 |
 | 5 | Runtime Debugger | Nemotron Ultra | Root-cause analysis on all failed scenarios |
 | 6 | Patch Generator | Nemotron Super | Generates minimal patch, validates in Contree sandbox, opens PR |
@@ -85,7 +85,8 @@ ghostvendor/
 │   │   ├── detective.py             # Agent 1 — vendor discovery + criticality scoring
 │   │   ├── twin_generator.py        # Agent 2 — Evil Twin FastAPI code generation
 │   │   ├── context_guard.py         # Agent 3 — AST + sandbox + LLM security gate
-│   │   └── resilience_verifier.py   # Agent 4 — chaos injection + scoring loop
+│   │   ├── resilience_verifier.py   # Agent 4 — chaos injection + scoring loop
+│   │   └── runtime_debugger.py      # Agent 5 — root cause analysis per vendor
 │   ├── pipeline/
 │   │   └── state_machine.py         # State transitions, retry logic, artifact store
 │   ├── tools/
@@ -99,8 +100,10 @@ ghostvendor/
 │   ├── models/
 │   │   ├── vendor_spec.py           # VendorSpec / VendorInfo schema
 │   │   ├── resilience_result.py     # ScenarioResult / VendorResult / ResilienceReport
+│   │   ├── diagnosis.py             # DiagnosisResult / DiagnosisReport schema
+│   │   ├── patch.py                 # PatchResult / PatchReport schema
 │   │   └── guard_decision.py        # GuardDecision schema
-│   └── prompts/                     # Agent system prompts (.txt, one per agent)
+│   └── prompts/                     # Agent system prompts (one .txt per agent)
 ├── tests/
 ├── pyproject.toml
 └── .env.example
