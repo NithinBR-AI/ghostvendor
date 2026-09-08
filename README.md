@@ -86,7 +86,8 @@ ghostvendor/
 │   │   ├── twin_generator.py        # Agent 2 — Evil Twin FastAPI code generation
 │   │   ├── context_guard.py         # Agent 3 — AST + sandbox + LLM security gate
 │   │   ├── resilience_verifier.py   # Agent 4 — chaos injection + scoring loop
-│   │   └── runtime_debugger.py      # Agent 5 — root cause analysis per vendor
+│   │   ├── runtime_debugger.py      # Agent 5 — root cause analysis per vendor
+│   │   └── patch_generator.py       # Agent 6 — unified diff generation + syntax validation
 │   ├── pipeline/
 │   │   └── state_machine.py         # State transitions, retry logic, artifact store
 │   ├── tools/
@@ -109,7 +110,8 @@ ghostvendor/
 │       ├── twin_generator.txt       # Agent 2 system prompt
 │       ├── context_guard.txt        # Agent 3 system prompt
 │       ├── resilience_verifier.txt  # Agent 4 system prompt
-│       └── runtime_debugger.txt     # Agent 5 system prompt
+│       ├── runtime_debugger.txt     # Agent 5 system prompt
+│       └── patch_generator.txt      # Agent 6 system prompt
 ├── tests/
 ├── pyproject.toml
 └── .env.example
