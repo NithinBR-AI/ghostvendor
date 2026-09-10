@@ -147,6 +147,9 @@ The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only origin
 ```
 ghostvendor/
 ├── main.py                          # Entrypoint: python main.py owner/repo [--triggered-by LOGIN] [--pr NUMBER]
+├── Makefile                         # make run — canonical demo-app shortcut (see Setup)
+├── docs/
+│   └── SCORING.md                   # Authoritative resilience score formula + outcome classification
 ├── src/
 │   ├── agents/
 │   │   ├── detective.py             # Agent 1 — vendor discovery + criticality scoring

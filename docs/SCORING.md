@@ -56,7 +56,7 @@ A 503 that was the original failure becomes DEGRADED (not FAIL) if the patched a
 overall_score = int( Σ(vendor_score × criticality) / Σ(criticality) )
 ```
 
-`criticality` is the vendor's criticality score from Agent 1 (1–100). Higher-criticality vendors (e.g. payment processors at 95) dominate the weighted average.
+`criticality` is the vendor's criticality score from Agent 1 (1–100). Higher-criticality vendors dominate the weighted average; a vendor scored 95 contributes roughly 3× as much as one scored 30.
 
 ## Scenario Modes
 
