@@ -181,12 +181,12 @@ def _verify_vendor(
     # If baseline timed out the demo app has a hung thread AND the twin has a stuck connection.
     # Restart the twin to free its worker before running chaos scenarios.
     if not baseline_passed and any("ReadTimeout" in str(o.get("exception", "")) for o in baseline_observations):
-        logger.warning("Baseline timed out for %s — restarting twin to clear stuck connection", vendor.name)
+        logger.warning("Baseline timed out for %s — resetting twin to clear stuck connection", vendor.name)
         try:
-            twin.restart()
-            logger.info("Twin %s restarted successfully", vendor.name)
+            twin.reset()
+            logger.info("Twin %s reset successfully", vendor.name)
         except Exception as e:
-            logger.error("Twin %s restart failed: %s", vendor.name, e)
+            logger.error("Twin %s reset failed: %s", vendor.name, e)
 
     attack_plan = _plan_attack(vendor, baseline_observations)
     logger.info("Attack plan (%d scenarios): %s", len(attack_plan), [s['mode'] for s in attack_plan])
@@ -395,7 +395,7 @@ def _run_scenario(
         clear_failed = True
 
     app_timed_out = result.exception == "requests.exceptions.Timeout"
-    if clear_failed or app_timed_out:
+    if clear_failed or (app_timed_out and not twin.is_healthy()):
         try:
             logger.warning(
                 "  resetting twin for %s after %s (clear_failed=%s, app_timed_out=%s)",

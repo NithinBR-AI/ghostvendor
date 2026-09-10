@@ -15,17 +15,17 @@ You will receive a JSON object:
   "root_cause": "<plain-English explanation>",
   "criticality_note": "<why this vendor is high/low criticality>",
   "source_code": "<full content of the affected file>",
-  "caller_files": {"<path>": "<source of files that call affected_function — may be absent>"}
+  "sibling_patch_for_same_vendor": "<optional — fixed source of another file already patched for this vendor. If present, your patch MUST be compatible: e.g. if the client now returns an error dict on failure, the route must check isinstance(result, dict) and 'error' in result and return 503>"
 }
 
 ## Fix strategies
 
 Apply EXACTLY the strategy specified. Do not add unrelated changes.
 
-- timeout_with_retry: Add `timeout=10` to the HTTP call. Wrap in try/except for Timeout and RequestException. Return a structured error dict (e.g. {"error": "timeout", "message": "..."}) on failure. Retry once on transient errors (429, 502, 503) with a 1-second sleep before giving up.
+- timeout_with_retry: Add `timeout=10` as a keyword argument directly on the requests.post/get/put call itself (e.g. `requests.post(url, ..., timeout=10)`). Wrap the call in try/except requests.exceptions.Timeout — on Timeout, immediately return {"error": "timeout", "message": "..."}. Do NOT retry on Timeout. Retry once only on HTTP status 429, 502, or 503 with a 1-second sleep, then return the error dict if it fails again.
 - circuit_breaker: Add a module-level `_circuit_open = False` flag. After 3 consecutive failures set it to True and raise immediately without calling the vendor. Reset after 60 seconds. Use a threading.Lock for thread safety.
 - fire_and_forget: Wrap the vendor call in a `threading.Thread(daemon=True)`. The main flow continues immediately. Errors in the thread are logged but never re-raised.
-- graceful_degradation: Wrap the vendor call in try/except. On any exception return a safe default (empty dict, None, or a cached value) and log a warning. Do not re-raise.
+- graceful_degradation: Check the return value from the vendor call — if it indicates an error (non-2xx status code, error key present, or unexpected type), return a proper HTTP error response (e.g. `return jsonify({"error": "vendor error"}), 503`) and log a warning. Also wrap in try/except for exceptions. Never return HTTP 2xx when the vendor signalled failure.
 - input_validation: Add guard clauses at the top of the function. Validate required fields are present and non-empty. Return a structured error dict if validation fails — never call the vendor with bad input.
 
 ## Output format
@@ -41,41 +41,9 @@ Return ONLY a JSON object — no markdown, no explanation, no code fences:
   "pr_description": "<markdown — 3 sections: ## What Failed, ## Fix Applied, ## Why This Strategy>"
 }
 
-## Caller awareness
-
-The patched function may return an error dict instead of the normal success dict on failure.
-The input may include a `caller_files` field — a dict of {path: source_code} for every file
-that references the affected module. You MUST inspect each caller for direct field access on the
-return value (e.g. `result["id"]`, `result["status"]`). If a caller does NOT check for an error
-return (no `if "error" in result` guard, no try/except), it will raise KeyError → HTTP 500.
-
-For every such caller, add a patch in `extra_patches` that adds a guard:
-  - Check `if "error" in result:` before accessing result fields
-  - On error: `return jsonify({"error": result.get("message", "vendor error")}), 503`
-
-If you need to patch a caller file as well, add it as a second entry in an `extra_patches` array:
-
-{
-  "vendor": "...",
-  "affected_file": "...",
-  "fix_strategy": "...",
-  "fixed_source": "...",
-  "extra_patches": [
-    {
-      "affected_file": "<repo-relative path of caller>",
-      "fixed_source": "<complete fixed content of caller file>"
-    }
-  ],
-  "pr_title": "...",
-  "pr_description": "..."
-}
-
-If no caller needs patching, omit `extra_patches` entirely (do not include an empty array).
-
 ## Hard rules
 
 - Return the COMPLETE file in fixed_source — every line, including unchanged parts
-- For extra_patches entries, also return the complete file — every line
 - Only modify what is necessary — all other functions must be byte-identical to source_code
 - Add new imports only at the top of the file (stdlib only: threading, time, logging)
 - Do not change function signatures (parameter names, types, defaults)

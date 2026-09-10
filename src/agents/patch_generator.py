@@ -77,6 +77,9 @@ def run(
                     break
 
     patches: list[PatchResult] = []
+    # Track fixed_source produced for each vendor so sibling patches (e.g. route patched
+    # after client) can see what the client now returns on failure. Keyed by vendor name.
+    vendor_sibling_context: dict[str, str] = {}
 
     for diagnosis in diagnosis_report.diagnoses:
         if skip_vendors and diagnosis.vendor in skip_vendors:
@@ -103,8 +106,17 @@ def run(
             source_files=source_files,
             previous_failure=per_vendor_failure,
             canonical_key=canonical_key,
+            sibling_patch_context=vendor_sibling_context.get(diagnosis.vendor),
         )
         patches.append(patch)
+        # Store this patch's fixed_source so the next sibling diagnosis for the same vendor
+        # (e.g. route patched after client) knows what the client now returns on failure.
+        if patch.fixed_source:
+            existing = vendor_sibling_context.get(diagnosis.vendor, "")
+            vendor_sibling_context[diagnosis.vendor] = (
+                existing + f"\n\n--- sibling patch for {patch.affected_file} ---\n{patch.fixed_source}"
+                if existing else patch.fixed_source
+            )
         logger.info("Agent 6: %s → pr_title=%r | diff_lines=%d", patch.vendor, patch.pr_title, len(patch.patch_diff.splitlines()))
 
     logger.info("Agent 6: generated %d patch(es)", len(patches))
@@ -117,22 +129,8 @@ def _generate_patch(
     source_files: dict[str, str] | None = None,
     previous_failure: str | None = None,
     canonical_key: str | None = None,
+    sibling_patch_context: str | None = None,
 ) -> PatchResult:
-    affected_module = Path(diagnosis.affected_file).stem
-    caller_files: dict[str, str] = {}
-    if source_files:
-        affected_norm = (canonical_key or diagnosis.affected_file).replace("\\", "/")
-        for path, content in source_files.items():
-            norm_path = path.replace("\\", "/")
-            if norm_path == affected_norm:
-                continue
-            # Only include files that actually import this module — not every file that
-            # happens to contain the stem string as a substring (Issue 6).
-            if (f"from {affected_module} import" in content or
-                    f"import {affected_module}" in content or
-                    f"from .{affected_module} import" in content):
-                caller_files[path] = content[:4000]
-
     base_payload = {
         "vendor": diagnosis.vendor,
         "affected_file": diagnosis.affected_file,
@@ -143,10 +141,15 @@ def _generate_patch(
         "criticality_note": diagnosis.criticality_note,
         "source_code": source_code,
     }
-    if caller_files:
-        base_payload["caller_files"] = caller_files
     if previous_failure:
         base_payload["previous_patch_failed"] = previous_failure
+    if sibling_patch_context:
+        base_payload["sibling_patch_for_same_vendor"] = (
+            "Another file for the same vendor was already patched in this pipeline run. "
+            "Its fixed source is provided below so you understand what it now returns on failure — "
+            "make sure your patch is compatible with it (e.g. if the client now returns an error dict, "
+            "the route must check for that dict and return 503):\n\n" + sibling_patch_context
+        )
 
     # Unified attempt loop — JSON errors, syntax errors, and zero-diff results
     # all feed the next attempt with compounding context.

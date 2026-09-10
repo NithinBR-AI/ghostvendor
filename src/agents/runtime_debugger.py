@@ -49,21 +49,22 @@ def run(report: ResilienceReport, source_files: dict[str, str]) -> DiagnosisRepo
             [s.mode for s in failed],
         )
 
-        diagnosis = _diagnose_vendor(
+        vendor_diagnoses = _diagnose_vendor(
             vendor_name=vendor_result.vendor_name,
             criticality_score=vendor_result.criticality_score,
             failed_scenarios=failed,
             source_files=source_files,
         )
-        diagnoses.append(diagnosis)
-        logger.info(
-            "Agent 5: %s → patterns=%s strategy=%s file=%s fn=%s",
-            diagnosis.vendor,
-            [p.value for p in diagnosis.patterns],
-            diagnosis.fix_strategy.value,
-            diagnosis.affected_file,
-            diagnosis.affected_function,
-        )
+        for diagnosis in vendor_diagnoses:
+            diagnoses.append(diagnosis)
+            logger.info(
+                "Agent 5: %s → patterns=%s strategy=%s file=%s fn=%s",
+                diagnosis.vendor,
+                [p.value for p in diagnosis.patterns],
+                diagnosis.fix_strategy.value,
+                diagnosis.affected_file,
+                diagnosis.affected_function,
+            )
 
     logger.info("Agent 5: diagnosed %d vendor(s)", len(diagnoses))
     return DiagnosisReport(repository=report.repository, diagnoses=diagnoses)
@@ -74,7 +75,7 @@ def _diagnose_vendor(
     criticality_score: int,
     failed_scenarios: list[ScenarioResult],
     source_files: dict[str, str],
-) -> DiagnosisResult:
+) -> list[DiagnosisResult]:
     user_message = json.dumps(
         {
             "vendor": {"name": vendor_name, "criticality_score": criticality_score},
@@ -105,8 +106,13 @@ def _diagnose_vendor(
             f"Agent 5 returned invalid JSON for {vendor_name}: {e}\n\nRaw:\n{raw}"
         ) from e
 
+    # Agent 5 now returns a list — one entry per affected file.
+    # Guard against the model returning a single object instead of an array.
+    if isinstance(data, dict):
+        data = [data]
+
     try:
-        return DiagnosisResult.model_validate(data)
+        return [DiagnosisResult.model_validate(entry) for entry in data]
     except Exception as e:
         raise ValueError(
             f"Agent 5 output failed schema validation for {vendor_name}: {e}\n\nData:\n{data}"

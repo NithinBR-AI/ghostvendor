@@ -1,3 +1,4 @@
+import datetime
 import logging
 import shutil
 import tempfile
@@ -229,7 +230,8 @@ class StateMachine:
         markdown file so the pipeline always produces a human-readable artifact.
         """
         repo = self.artifacts.repo
-        branch = f"ghostvendor/findings-{self.retry_count}"
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        branch = f"ghostvendor/findings/{ts}"
 
         score_before = self.artifacts.resilience_score_before
         failed_by_vendor = {
@@ -422,7 +424,8 @@ Review the diagnoses above and apply the suggested fix strategies manually.
 
         try:
             repo = self.artifacts.repo
-            branch = _github_with_retry(lambda: github_client.create_branch(repo, f"ghostvendor/fix-{self.retry_count + 1}"))
+            ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            branch = _github_with_retry(lambda: github_client.create_branch(repo, f"ghostvendor/resilience/{ts}"))
             logger.info("Created branch: %s", branch)
 
             for patch in patch_report.patches:
@@ -717,7 +720,7 @@ def _rescore_patched(
                     twin.clear_chaos()
                     try:
                         status, _, _ = app.post(vendor.app_route, payload, timeout=_REQUEST_TIMEOUT)
-                        baseline_passed = status < 500
+                        baseline_passed = status < 400 or status == 503
                     except Exception:
                         baseline_passed = False
 
@@ -991,6 +994,10 @@ def _run_patched_validation(
                             twin.activate_chaos(mode=mode)
                             status, body, elapsed_ms = app.post(vendor.app_route, request_payload, timeout=35)
                             app_timed_out = elapsed_ms is not None and elapsed_ms > 11000
+
+                            # Hold chaos active for 2s so any retry in the patch still hits the
+                            # evil twin — prevents the race where a retry escapes into a clean twin.
+                            time.sleep(2)
 
                             clear_failed = False
                             try:

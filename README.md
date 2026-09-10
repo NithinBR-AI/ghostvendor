@@ -50,7 +50,7 @@ GhostVendor never merges code automatically. Every output is a **draft PR** that
 
 When the patched app passes all previously-failed chaos scenarios:
 
-- A branch `ghostvendor/fix-{n}` is created on the target repo
+- A branch `ghostvendor/resilience/<timestamp>` is created on the target repo
 - Each patched file is committed with a descriptive message
 - A **ready-for-review PR** (not draft) is opened with:
   - Resilience score before and after patch (e.g. 23/100 → 87/100)
@@ -67,7 +67,7 @@ The fix PR is not a draft because it has already been validated: the pipeline pr
 
 When Agent 6 cannot produce a patch that passes validation after 3 retry cycles:
 
-- A branch `ghostvendor/findings-{n}` is created
+- A branch `ghostvendor/findings/<timestamp>` is created
 - A `GHOSTVENDOR_FINDINGS.md` file is committed containing:
   - Resilience score
   - Every failed scenario per vendor
@@ -116,6 +116,22 @@ Evil Twin processes run in isolated temp directories and are fully cleaned up af
 
 ---
 
+## Context Guard — LLM Code in a Nebius Sandbox
+
+GhostVendor generates Evil Twin code with an LLM. Before that code ever runs on the local machine, Agent 3 puts it through a 3-layer security gate:
+
+| Layer | Mechanism | What it catches |
+|---|---|---|
+| 1 — AST Inspection | Python `ast` module static analysis | `exec`, `eval`, `__import__`, subprocess calls, socket opens, filesystem writes outside temp |
+| 2 — Contree Sandbox | Nebius-hosted secure execution environment | Actual runtime behavior — network calls, process spawning, anything AST missed |
+| 3 — LLM Policy Review | Nemotron Ultra policy judge | Intent analysis — flags code that is structurally safe but semantically suspicious |
+
+All three layers must pass before the twin is allowed to run locally. If any layer rejects, the twin is discarded and the run halts.
+
+**Why this matters:** AI-generated code that runs arbitrary network servers is a real attack surface. A malicious or hallucinated twin could exfiltrate env vars, open reverse shells, or corrupt local state. The Nebius Contree sandbox executes the twin in an isolated cloud environment — nothing it does can reach the local machine. This is not a demo-mode safety check; it is a genuine defense-in-depth architecture for agentic systems that execute LLM output.
+
+---
+
 ## Resilience Score
 
 ```
@@ -134,7 +150,7 @@ The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only origin
 | GitHub retry wrapper | All GitHub API calls retried up to 3× with 5 s delay on transient failures |
 | Port TIME_WAIT handling | `_pick_free_port()` falls back to OS ephemeral port if preferred port is in TIME_WAIT |
 | Port-free guard | `_wait_for_port_free()` raises immediately if a port won't clear — no silent 15 s startup waste |
-| Import merge | `_restore_unchanged_lines()` preserves model-added imports (e.g. `import time`) when restoring the file header — prevents `NameError` at runtime |
+| Full-file ownership | Agent 6 returns the complete fixed file — model owns every line, ensuring model-added imports (e.g. `import time`) are preserved and no `NameError` at runtime |
 | Source cap | Agent 5 receives at most 8 source files × 4000 chars each to stay within context limits |
 | LLM wrapper stripping | All agents use shared `strip_llm_wrapper()` — handles missing `</think>` tags and absent fences without crashing |
 | Blocking sleep fix | `_fix_blocking_sleep()` post-processor rewrites any `time.sleep()` in generated Evil Twin code to `await asyncio.sleep()` — prevents event loop stalls that cause `/chaos DELETE` to hang during VALIDATE |
