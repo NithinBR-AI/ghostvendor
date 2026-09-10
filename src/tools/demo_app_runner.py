@@ -20,9 +20,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-STARTUP_TIMEOUT = 15    # seconds to wait for app to become ready
+STARTUP_TIMEOUT = 60    # seconds to wait for app to become ready
 HEALTH_INTERVAL = 0.5
-REQUEST_TIMEOUT = 12    # seconds — must be longer than any chaos delay_seconds
+REQUEST_TIMEOUT = 12    # seconds — baseline verify; override per call for patched validation (needs 35s for retry scenarios)
 
 
 class DemoAppProcess:
@@ -84,7 +84,8 @@ class DemoAppProcess:
     def _wait_for_port_free(self, timeout: float = 10.0) -> None:
         """
         Wait until port is not bound — guards against a previous process still shutting down.
-        Proceeds immediately if port is already free.
+        Raises RuntimeError immediately if port is still bound after timeout, rather than
+        letting _wait_for_ready burn another 15s before failing.
         """
         import socket
         deadline = time.monotonic() + timeout
@@ -94,7 +95,10 @@ class DemoAppProcess:
                 if s.connect_ex(("localhost", self.port)) != 0:
                     return  # port is free
             time.sleep(0.3)
-        # Port still bound after timeout — proceed anyway and let startup fail with a clear error
+        raise RuntimeError(
+            f"Port {self.port} still bound after {timeout:.0f}s — previous app process did not release it. "
+            f"Cannot start new app instance."
+        )
 
     def _wait_for_ready(self) -> None:
         """
@@ -124,24 +128,14 @@ class DemoAppProcess:
             f"Last error: {last_error}"
         )
 
-    def post(self, path: str, payload: dict) -> tuple[int, dict | str, float]:
-        """
-        Fire a POST request at the target app and return structured result.
-
-        Returns:
-            (http_status, response_body, response_time_ms)
-
-        Raises:
-            requests.exceptions.Timeout: If the request exceeds REQUEST_TIMEOUT.
-            requests.exceptions.ConnectionError: If the app is unreachable.
-        """
+    def post(self, path: str, payload: dict, timeout: float | None = None) -> tuple[int, dict | str, float]:
         url = f"{self.base_url}{path}"
         logger.debug("POST %s payload=%s", url, payload)
         start = time.monotonic()
         resp = requests.post(
             url,
             json=payload,
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout if timeout is not None else REQUEST_TIMEOUT,
         )
         elapsed = round((time.monotonic() - start) * 1000, 1)
         try:
@@ -159,6 +153,13 @@ class DemoAppProcess:
                 self._process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._process.kill()
+                self._process.wait(timeout=2)
+            try:
+                stderr_out = self._process.stderr.read().decode("utf-8", errors="replace")
+                if stderr_out.strip():
+                    logger.info("App stderr: %s", stderr_out[-2000:])
+            except Exception:
+                pass
             self._process = None
 
     def __enter__(self):

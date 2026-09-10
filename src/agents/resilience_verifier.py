@@ -56,7 +56,6 @@ def run(
     source_files: dict[str, str] | None = None,
 ) -> ResilienceReport:
 
-    twin_env = {a.base_url_env: a.local_base_url for a in evil_twins.values()}
     extra_env = {**repo_info.extra_env, **_fake_credentials(spec)}
     app_path = repo_info.local_path
     app_port = repo_info.port
@@ -73,6 +72,13 @@ def run(
         twin = twin_manager.get(artifact.vendor_name)
         healthy = twin.is_healthy() if twin else False
         logger.info("Twin %s health check: %s", artifact.vendor_name, "OK" if healthy else "FAIL")
+
+    # Build twin_env from live process ports (may differ from artifact.port if TIME_WAIT caused remap)
+    twin_env = {
+        evil_twins[name].base_url_env: twin_manager.get(name).base_url
+        for name in evil_twins
+        if twin_manager.get(name)
+    }
 
     # Synthesize valid request payloads per vendor from source code (Ultra: Mode 0)
     vendor_payloads: dict[str, dict] = {}
@@ -115,7 +121,7 @@ def run(
         logger.info("Stopping twin for %s", vendor.name)
         twin.stop()
 
-    return ResilienceReport(repository=spec.repository, vendor_results=vendor_results)
+    return ResilienceReport(repository=spec.repository, vendor_results=vendor_results), vendor_payloads
 
 
 def _synthesize_payload(vendor: Vendor, source_files: dict[str, str]) -> dict:
@@ -177,8 +183,7 @@ def _verify_vendor(
     if not baseline_passed and any("ReadTimeout" in str(o.get("exception", "")) for o in baseline_observations):
         logger.warning("Baseline timed out for %s — restarting twin to clear stuck connection", vendor.name)
         try:
-            twin.stop()
-            twin.start()
+            twin.restart()
             logger.info("Twin %s restarted successfully", vendor.name)
         except Exception as e:
             logger.error("Twin %s restart failed: %s", vendor.name, e)
@@ -293,6 +298,9 @@ def _execute_attack(
         elif action == "escalate":
             next_mode = decision.get("next_mode")
             if next_mode and next_mode in _AVAILABLE_MODES:
+                # Deduplicate: remove any existing occurrence before inserting at front
+                # so the LLM's chosen mode runs exactly once, not twice.
+                remaining = [r for r in remaining if r["mode"] != next_mode]
                 remaining.insert(0, {"mode": next_mode, "reasoning": "escalation by Ultra"})
 
     return completed
@@ -386,19 +394,17 @@ def _run_scenario(
         logger.warning("  clear_chaos after %s failed: %s", mode, e)
         clear_failed = True
 
-    # Restart the twin if:
-    # - clear_chaos timed out (worker blocked by async sleep still running), OR
-    # - the app request itself timed out (demo app's keep-alive socket is still held open,
-    #   occupying the twin's single uvicorn worker for subsequent chaos control calls)
     app_timed_out = result.exception == "requests.exceptions.Timeout"
     if clear_failed or app_timed_out:
         try:
-            logger.warning("  restarting twin for %s (clear_failed=%s, app_timed_out=%s)", vendor.name, clear_failed, app_timed_out)
-            twin.stop()
-            twin.start()
-            logger.info("  twin %s restarted OK", vendor.name)
+            logger.warning(
+                "  resetting twin for %s after %s (clear_failed=%s, app_timed_out=%s)",
+                vendor.name, mode, clear_failed, app_timed_out,
+            )
+            twin.reset()
+            logger.info("  twin %s reset OK", vendor.name)
         except Exception as e:
-            logger.error("  twin %s restart failed: %s", vendor.name, e)
+            logger.error("  twin %s reset failed: %s", vendor.name, e)
 
     return result
 

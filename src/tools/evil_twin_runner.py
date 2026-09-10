@@ -23,6 +23,32 @@ logger = logging.getLogger(__name__)
 import requests
 
 
+def _pick_free_port(preferred: int) -> int:
+    """
+    Return a TCP port guaranteed to be free right now.
+
+    Tries preferred first; if it is occupied (LISTEN or TIME_WAIT), asks the OS
+    for an ephemeral port by binding to port 0 — the OS will never hand back a
+    port in TIME_WAIT, so this is always safe.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("", preferred))
+            # Preferred port is free — release it and return it
+            return preferred
+        except OSError:
+            pass
+
+    # Preferred port is in use or TIME_WAIT — let OS pick a clean ephemeral port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        port = s.getsockname()[1]
+    logger.info("Port %d unavailable (TIME_WAIT/LISTEN) — using ephemeral port %d instead", preferred, port)
+    return port
+
+
 class EvilTwinProcess:
     """
     Manages the lifecycle of a single Evil Twin subprocess.
@@ -31,12 +57,13 @@ class EvilTwinProcess:
     in an isolated temp directory so multiple twins can run concurrently.
     """
 
-    STARTUP_TIMEOUT = 10   # seconds to wait for the twin to become healthy
+    STARTUP_TIMEOUT = 60   # seconds to wait for the twin to become healthy
     HEALTH_INTERVAL = 0.5  # polling interval during startup
 
     def __init__(self, vendor_name: str, port: int, code: str):
         self.vendor_name = vendor_name
         self.port = port
+        self._preferred_port = port  # original requested port — preserved across restarts
         self.code = code
         self._process: subprocess.Popen | None = None
         self._work_dir: str | None = None
@@ -66,7 +93,10 @@ class EvilTwinProcess:
         twin_file.write_text(self.code, encoding="utf-8")
         logger.debug("%s: written to %s", self.vendor_name, twin_file)
 
-        cmd = [sys.executable, "-m", "uvicorn", f"{self._module_name}:app", "--port", str(self.port), "--log-level", "warning"]
+        # Pick a port that is guaranteed free — falls back to ephemeral if preferred is in TIME_WAIT
+        self.port = _pick_free_port(self.port)
+
+        cmd = [sys.executable, "-m", "uvicorn", f"{self._module_name}:app", "--port", str(self.port), "--log-level", "info"]
         logger.info("%s: launching %s in %s", self.vendor_name, cmd, self._work_dir)
         self._process = subprocess.Popen(
             cmd,
@@ -84,6 +114,17 @@ class EvilTwinProcess:
         deadline = time.monotonic() + self.STARTUP_TIMEOUT
         last_error = None
         while time.monotonic() < deadline:
+            # Detect process crash — no point continuing the health poll
+            if self._process.poll() is not None:
+                stderr_out = ""
+                try:
+                    stderr_out = self._process.stderr.read().decode("utf-8", errors="replace")[-2000:]
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Evil Twin for {self.vendor_name} process exited with code "
+                    f"{self._process.returncode} before becoming healthy.\nstderr:\n{stderr_out}"
+                )
             try:
                 resp = requests.get(self.health_url, timeout=1)
                 if resp.status_code == 200:
@@ -92,10 +133,44 @@ class EvilTwinProcess:
                 last_error = e
             time.sleep(self.HEALTH_INTERVAL)
 
-        self.stop()
+        # Capture stderr via a thread — avoids blocking on Windows pipes
+        import threading
+
+        stderr_out = "(no stderr captured)"
+        stderr_buf: list[bytes] = []
+
+        def _read_stderr():
+            try:
+                stderr_buf.append(self._process.stderr.read())
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=_read_stderr, daemon=True)
+        reader.start()
+        try:
+            self._process.kill()
+        except OSError:
+            pass
+        reader.join(timeout=3)
+        if stderr_buf:
+            stderr_out = stderr_buf[0].decode("utf-8", errors="replace")[-2000:]
+
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=3)
+        self._process = None
+        self._wait_for_port_free()
+        if self._work_dir:
+            import shutil
+            shutil.rmtree(self._work_dir, ignore_errors=True)
+            self._work_dir = None
+
         raise RuntimeError(
             f"Evil Twin for {self.vendor_name} did not become healthy within "
-            f"{self.STARTUP_TIMEOUT}s on port {self.port}. Last error: {last_error}"
+            f"{self.STARTUP_TIMEOUT}s on port {self.port}. Last error: {last_error}\n"
+            f"stderr:\n{stderr_out}"
         )
 
     def activate_chaos(self, mode: str, duration_seconds: int | None = None, delay_seconds: int | None = None) -> None:
@@ -154,16 +229,37 @@ class EvilTwinProcess:
             return False
 
     def stop(self) -> None:
-        """Terminate the Evil Twin subprocess and wait for the port to be released."""
+        """Kill the Evil Twin subprocess and clean up its temp directory."""
         if self._process:
-            self._process.terminate()
+            # SIGKILL unconditionally — SIGTERM leaves uvicorn workers alive when they are
+            # blocked on a timeout chaos connection. kill() guarantees the process is gone.
             try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
                 self._process.kill()
+            except OSError:
+                pass
+            try:
                 self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
             self._process = None
         self._wait_for_port_free()
+        if self._work_dir:
+            import shutil
+            shutil.rmtree(self._work_dir, ignore_errors=True)
+            self._work_dir = None
+
+    def reset(self) -> None:
+        """
+        Kill and relaunch the twin on the same port.
+
+        The authoritative recovery path after any chaos scenario that may have left
+        a uvicorn worker blocked. Uses kill() (not terminate()) so the process is
+        guaranteed dead before the port is recycled and the new process starts.
+        Call this after every timeout scenario — the 3s cost is worth the guarantee.
+        """
+        self.stop()
+        self.port = self._preferred_port
+        self.start()
 
     def _wait_for_port_free(self, timeout: float = 8.0) -> None:
         """Poll until the port is no longer bound — Windows holds ports briefly after process exit."""
@@ -207,7 +303,7 @@ class EvilTwinManager:
         twin = EvilTwinProcess(vendor_name=vendor_name, port=port, code=code)
         twin.start()
         self._twins[vendor_name] = twin
-        logger.info("Evil Twin for %s running on port %d", vendor_name, port)
+        logger.info("Evil Twin for %s running on port %d", vendor_name, twin.port)
         return twin
 
     def get(self, vendor_name: str) -> EvilTwinProcess | None:

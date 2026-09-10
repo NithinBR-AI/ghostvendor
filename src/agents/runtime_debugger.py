@@ -78,7 +78,7 @@ def _diagnose_vendor(
     user_message = json.dumps(
         {
             "vendor": {"name": vendor_name, "criticality_score": criticality_score},
-            "source_files": source_files,
+            "source_files": {k: v[:4000] for k, v in list(source_files.items())[:8]},
             "failed_scenarios": [
                 {
                     "mode": s.mode,

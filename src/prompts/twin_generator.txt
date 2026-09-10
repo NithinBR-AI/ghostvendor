@@ -30,6 +30,9 @@ A single Python file that:
    - 429_rate_limit: return HTTP 429 with {"error": "Too Many Requests"} and Retry-After: 60 header
    - empty_response: return HTTP 200 with empty body
 4. Always responds to GET /health with HTTP 200 {"status": "ok"} regardless of failure state
+   CRITICAL: /chaos (POST, DELETE, GET), /health, and / are CONTROL routes — they MUST NEVER apply
+   chaos injection. Chaos state only applies to vendor API routes. The chaos check must be inside
+   each vendor route handler only — never in middleware or any wrapper that covers all routes.
 5. Logs every request (method, path, timestamp, active failure mode) to stderr
 
 ## Implementation requirements

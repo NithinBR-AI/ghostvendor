@@ -1,5 +1,8 @@
+import logging
 import os
 from github import Github, GithubException
+
+logger = logging.getLogger(__name__)
 
 _client = None
 
@@ -27,10 +30,21 @@ def get_file(repo: str, path: str) -> str:
     return content.decoded_content.decode("utf-8")
 
 
-def create_branch(repo: str, branch: str):
+def create_branch(repo: str, branch: str) -> str:
     r = get_repo(repo)
     source = r.get_branch(r.default_branch)
-    r.create_git_ref(ref=f"refs/heads/{branch}", sha=source.commit.sha)
+    candidate = branch
+    n = 1
+    while True:
+        try:
+            r.create_git_ref(ref=f"refs/heads/{candidate}", sha=source.commit.sha)
+            return candidate
+        except GithubException as e:
+            if e.status == 422:
+                n += 1
+                candidate = f"{branch}-{n}"
+            else:
+                raise
 
 
 def commit_file(repo: str, branch: str, path: str, content: str, message: str):
@@ -42,10 +56,45 @@ def commit_file(repo: str, branch: str, path: str, content: str, message: str):
         r.create_file(path, message, content, branch=branch)
 
 
-def create_pr(repo: str, branch: str, title: str, body: str) -> str:
+def create_pr(
+    repo: str,
+    branch: str,
+    title: str,
+    body: str,
+    draft: bool = False,
+    labels: list[str] | None = None,
+    reviewer: str | None = None,
+) -> str:
     r = get_repo(repo)
-    pr = r.create_pull(title=title, body=body, head=branch, base=r.default_branch)
+    pr = r.create_pull(title=title, body=body, head=branch, base=r.default_branch, draft=draft)
+    if labels:
+        _ensure_labels(r, labels)
+        pr.add_to_labels(*labels)
+    if reviewer:
+        try:
+            pr.create_review_request(reviewers=[reviewer])
+            logger.info("PR reviewer requested: %s", reviewer)
+        except GithubException as e:
+            logger.warning("Failed to add reviewer %s: %s", reviewer, e)
     return pr.html_url
+
+
+def _ensure_labels(repo, label_names: list[str]) -> None:
+    """Create any labels that don't yet exist on the repo."""
+    try:
+        existing = {lbl.name for lbl in repo.get_labels()}
+        _LABEL_COLORS = {
+            "ghostvendor": "0075ca",
+            "automated": "e4e669",
+            "resilience": "d93f0b",
+            "ghostvendor-findings": "f9d0c4",
+        }
+        for name in label_names:
+            if name not in existing:
+                color = _LABEL_COLORS.get(name, "ededed")
+                repo.create_label(name=name, color=color)
+    except Exception:
+        pass  # labels are cosmetic — never block PR creation
 
 
 def dispatch_workflow(repo: str, workflow_id: str, branch: str, inputs: dict = None):

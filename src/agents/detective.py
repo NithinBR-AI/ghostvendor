@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from tools.ast_scanner import scan_directory, scan_result_to_dict
 from tools.github_client import get_repo, get_tree, get_file
 from utils import nebius_client
+from utils.nebius_client import strip_llm_wrapper
 from models.vendor_spec import VendorSpec
 
 
@@ -114,18 +115,7 @@ def run(repo: str, local_path: str | None = None) -> tuple[VendorSpec, dict[str,
     }, indent=2)
 
     raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.1)
-
-    # Strip <think>...</think> reasoning blocks (Nemotron Ultra chain-of-thought)
-    raw = raw.strip()
-    if "<think>" in raw and "</think>" in raw:
-        raw = raw[raw.index("</think>") + len("</think>"):].strip()
-
-    # Strip markdown fences if the model wraps its output
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+    raw = strip_llm_wrapper(raw)
 
     try:
         data = json.loads(raw)
