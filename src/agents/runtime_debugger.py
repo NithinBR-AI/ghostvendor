@@ -112,10 +112,12 @@ def _diagnose_vendor(
         data = [data]
 
     try:
-        return [DiagnosisResult.model_validate(entry) for entry in data]
+        results = [DiagnosisResult.model_validate(entry) for entry in data]
     except Exception as e:
         raise ValueError(
             f"Agent 5 output failed schema validation for {vendor_name}: {e}\n\nData:\n{data}"
         ) from e
+
+    return results
 
 

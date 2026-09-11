@@ -51,9 +51,9 @@ GhostVendor never merges code automatically. Every output is a **draft PR** that
 When the patched app passes all previously-failed chaos scenarios:
 
 - A branch `ghostvendor/resilience/<timestamp>` is created on the target repo
-- Each patched file is committed with a descriptive message
+- Each patched file is committed with a descriptive message — including any caller/route patches generated as `extra_patches` alongside the primary fix
 - A **ready-for-review PR** (not draft) is opened with:
-  - Resilience score before and after patch (e.g. 23/100 → 87/100)
+  - Resilience score before and after patch (e.g. 23/100 → 81/100)
   - Every failed scenario that was fixed, per vendor
   - The patch strategy and root-cause summary for each vendor
   - Number of retry cycles needed before validation passed
@@ -155,6 +155,9 @@ The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only origin
 | LLM wrapper stripping | All agents use shared `strip_llm_wrapper()` — handles missing `</think>` tags and absent fences without crashing |
 | Blocking sleep fix | `_fix_blocking_sleep()` post-processor rewrites any `time.sleep()` in generated Evil Twin code to `await asyncio.sleep()` — prevents event loop stalls that cause `/chaos DELETE` to hang during VALIDATE |
 | Health endpoint fix | `_fix_health_endpoint()` post-processor replaces generated `/health` route bodies with a safe minimal return — prevents `KeyError` from model-generated `log_request()` helpers |
+| Caller contract patching | When Agent 6 changes a function's return contract, it searches all source files for call sites and patches unguarded `result["key"]` access — prevents 500s in route handlers after the client is fixed |
+| Rescore twin reset | Each Evil Twin is launched fresh and immediately `reset()` before the rescore scenario loop — eliminates half-open connection corruption from VALIDATE's timeout scenarios bleeding into rescore |
+| Rescore baseline skip | Rescore does not re-test the baseline; VALIDATE already proved the patched app serves clean traffic. Re-testing risks poisoning the twin when the patched client's own timeout fires on a no-chaos request |
 
 ---
 
@@ -162,7 +165,7 @@ The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only origin
 
 ```
 ghostvendor/
-├── main.py                          # Entrypoint: python main.py owner/repo [--triggered-by LOGIN] [--pr NUMBER]
+├── main.py                          # Entrypoint: python main.py owner/repo [--triggered-by LOGIN] [--pr NUMBER] [--branch BRANCH]
 ├── Makefile                         # make run — canonical demo-app shortcut (see Setup)
 ├── docs/
 │   └── SCORING.md                   # Authoritative resilience score formula + outcome classification
@@ -242,7 +245,7 @@ python main.py owner/repo-name
 With triggering PR context:
 
 ```bash
-python main.py owner/repo-name --triggered-by github-login --pr 42
+python main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
 ```
 
 For local development (skips GitHub clone, uses local sibling directory):
@@ -250,6 +253,21 @@ For local development (skips GitHub clone, uses local sibling directory):
 ```bash
 GHOSTVENDOR_LOCAL_DEV=1 python main.py owner/repo-name
 ```
+
+---
+
+## Scope & Constraints
+
+GhostVendor is designed for a well-defined target class. Understanding the scope helps set correct expectations:
+
+| Constraint | Detail |
+|---|---|
+| **Python only** | AST scanning, PYTHONPATH remapping, and patch generation are Python-specific. Node.js, Go, and other runtimes are not currently supported. |
+| **Flask or FastAPI** | Startup detection looks for `app.run()` or `uvicorn.run()` calls to identify the server port. Other frameworks or custom entrypoints may need manual port hints. |
+| **Env-var-based vendor URLs** | Agent 1 finds vendors by detecting `os.environ.get(...)` calls near outbound HTTP calls. Vendors with hardcoded base URLs (e.g. `https://api.stripe.com` in source) are not detected. |
+| **HTTP vendors** | Chaos modes are HTTP-level (timeouts, 502s, 429s, malformed responses). Non-HTTP dependencies such as databases, message queues, or gRPC services are out of scope. |
+
+These constraints reflect deliberate scoping for the hackathon submission, not fundamental architectural limits. Broadening to other languages or transports is a natural extension path.
 
 ---
 
@@ -263,6 +281,45 @@ GHOSTVENDOR_LOCAL_DEV=1 python main.py owner/repo-name
 | Nano | `nvidia/Nemotron-3_5-Lightning` | Fast structured output (reserved for high-volume classification tasks) |
 
 Each tier has a fallback model. All calls go through `https://api.tokenfactory.nebius.com/v1/` (OpenAI-compatible).
+
+---
+
+## What's Next
+
+### Stage 1 — Hackathon Submission (current / in progress)
+- 6-agent autonomous pipeline: discover → attack → guard → verify → diagnose → remediate → validate
+- Evil Twin chaos server with 5 modes per vendor, asyncio-safe harness
+- 3-layer Context Guard: AST + Nebius Contree sandbox + LLM policy review
+- Caller contract patching — extra_patches for route handlers when client return shape changes
+- Validated patch PR opened only after all originally-failed scenarios pass
+- Findings-only draft PR fallback when patching fails after 3 retry cycles
+- Repo-agnostic: any Python Flask/FastAPI app with env-var-based vendor URLs
+- Streamlit dashboard** — "GhostVendor activated" banner, live agent cards, before/after score, PR link
+- Guardrails — runtime constraints on agents: no writes outside temp dir, no network calls outside allowed vendor list, no shell execution in generated patches
+- Evals — `evals/` suite: Agent 6 produces non-empty patch, patch differs from original, rescore classifies outcomes correctly
+
+### Stage 2 — Broader Language & Vendor Support
+- **Node.js / TypeScript** — AST scanner and startup detector for Express/Fastify apps
+- **Non-HTTP vendors** — chaos modes for Redis timeouts, SQS delivery failures, database connection drops
+- **Hardcoded URL detection** — detect vendors not using env vars via static analysis of string literals near HTTP calls
+- **Multi-endpoint vendors** — attack each endpoint independently, not just the primary one
+
+### Stage 3 — Production Deployment
+- **GitHub App** — registers webhooks on `pull_request.opened`, `push`, and `schedule`; validates signatures; filters triggers to only fire when vendor client files change (no wasted runs on CSS or docs changes); supports `/ghostvendor rerun` comment command on any PR
+- **Job queue** — SQS-backed async dispatch; pipeline runs as ECS Fargate tasks (Lambda is too short for a full run); queue absorbs burst traffic from busy repos without dropping events
+- **State persistence** — DynamoDB + S3 for run history: every pipeline run stored with score before/after, patches generated, PR opened, token cost, and duration; queryable by repo, vendor, and date range
+- **Secrets management** — AWS Secrets Manager per-tenant for Nebius API keys and GitHub tokens; no credentials in environment variables at the worker level
+- **CI integration** — GitHub Actions trigger: run GhostVendor automatically on every PR that touches vendor client files, with status check gating merge until the resilience score meets a configured threshold
+
+### Stage 4 — Multi-Tenant & Observability
+- **Multi-repo support** — one GhostVendor deployment serves many repos across many orgs; per-repo config (vendor criticality overrides, excluded paths, minimum score threshold) stored in DynamoDB
+- **Run history dashboard** — every pipeline run surfaced with score trajectory, PR links, time-to-fix, and token cost; exportable for compliance or reporting
+- **Alerting** — if rescore drops below threshold on a previously-passing repo (e.g. after a dependency upgrade silently breaks timeout handling), page the on-call engineer before it hits production
+- **Cost tracking** — per-run Nebius token usage logged and aggregated by repo and org; budget alerts before a runaway retry loop burns the quota
+- **Feedback loop** — PR merge/close events feed back into the eval suite; merged patches promote to golden examples for future patch generation; rejected patches flagged for human review and used to improve Agent 6 prompts
+
+### Architecture Foundation Already in Place
+The pipeline's deterministic state machine, structured artifact handoffs, and repo-agnostic PYTHONPATH remapping were designed from day one to support these extensions without rewrites. Adding a new language means a new AST scanner and startup detector — the orchestration, scoring, and PR strategy are unchanged.
 
 ---
 

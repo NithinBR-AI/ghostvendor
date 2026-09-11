@@ -83,7 +83,7 @@ def run(repo: str, local_path: str | None = None) -> tuple[VendorSpec, dict[str,
     Args:
         repo: GitHub repository identifier (owner/name).
         local_path: If provided, scan the local clone instead of fetching from GitHub.
-                    Used when ghostvendor-demo-app is cloned locally for faster iteration.
+                    Used when the target repo is cloned locally for faster iteration.
 
     Returns:
         VendorSpec — the validated vendor_spec.json data contract.

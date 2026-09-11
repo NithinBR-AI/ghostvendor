@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 import requests
 
+from tools.evil_twin_template import assemble_twin as _assemble_twin
+
 
 def _pick_free_port(preferred: int) -> int:
     """
@@ -83,14 +85,14 @@ class EvilTwinProcess:
 
     def start(self) -> None:
         """
-        Write the Evil Twin code to a temp directory and launch uvicorn.
+        Assemble the full Evil Twin server from the fixed harness + LLM handler, then launch uvicorn.
 
         Raises:
             RuntimeError: If the twin does not become healthy within STARTUP_TIMEOUT.
         """
         self._work_dir = tempfile.mkdtemp(prefix=f"ghostvendor_twin_{self.vendor_name.lower()}_")
         twin_file = Path(self._work_dir) / f"{self._module_name}.py"
-        twin_file.write_text(self.code, encoding="utf-8")
+        twin_file.write_text(_assemble_twin(self.code, self.vendor_name), encoding="utf-8")
         logger.debug("%s: written to %s", self.vendor_name, twin_file)
 
         # Pick a port that is guaranteed free — falls back to ephemeral if preferred is in TIME_WAIT

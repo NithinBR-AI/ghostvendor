@@ -28,23 +28,38 @@ class RepoInfo:
             self.extra_env = {}
 
 
-def clone(repo: str) -> RepoInfo:
+def clone(repo: str, branch: str | None = None) -> RepoInfo:
     """
     Clone a GitHub repository (or reuse existing local clone) and detect startup config.
 
     Args:
         repo: GitHub owner/repo identifier (e.g. "nithinbr33/ghostvendor-demo-app").
+        branch: Branch to check out after cloning. Defaults to the repo's default branch.
 
     Returns:
         RepoInfo with local_path, start_command, and port.
     """
     repo_name = repo.split("/")[-1]
     local_path = _find_or_clone(repo, repo_name)
+    if branch:
+        _checkout_branch(local_path, branch)
     _ensure_dependencies(local_path)
     start_command, port = _detect_startup(local_path)
     extra_env = _detect_extra_env(local_path)
     logger.info("RepoInfo: local_path=%s start_command=%s port=%d extra_env=%s", local_path, start_command, port, extra_env)
     return RepoInfo(local_path=local_path, start_command=start_command, port=port, extra_env=extra_env)
+
+
+def _checkout_branch(local_path: str, branch: str) -> None:
+    """Fetch and check out the given branch in an existing local clone."""
+    subprocess.run(["git", "fetch", "origin", branch], cwd=local_path, capture_output=True)
+    result = subprocess.run(
+        ["git", "checkout", branch],
+        cwd=local_path, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git checkout {branch} failed: {result.stderr.strip()}")
+    logger.info("Checked out branch: %s", branch)
 
 
 def _find_or_clone(repo: str, repo_name: str) -> str:

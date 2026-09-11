@@ -23,6 +23,7 @@ from contree_sdk import ContreeSync
 from models.guard_decision import ASTFinding, GuardDecision, RiskLevel
 from models.vendor_spec import Vendor
 from utils import nebius_client
+from tools.evil_twin_template import assemble_twin
 
 
 _SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "context_guard.txt").read_text()
@@ -65,7 +66,8 @@ def run(vendor: Vendor, code: str) -> GuardDecision:
     ast_findings = _ast_inspect(code)
     logger.info("%s Layer1 AST: %d findings", vendor.name, len(ast_findings))
 
-    sandbox_exit, sandbox_stdout, sandbox_stderr, sandbox_skipped = _sandbox_execute(code, vendor.name)
+    assembled_code = assemble_twin(code, vendor.name)
+    sandbox_exit, sandbox_stdout, sandbox_stderr, sandbox_skipped = _sandbox_execute(assembled_code, vendor.name)
     logger.info("%s Layer2 Sandbox: exit=%d skipped=%s stderr=%r", vendor.name, sandbox_exit, sandbox_skipped, sandbox_stderr[:100])
 
     sandbox_unexpected = _detect_unexpected_sandbox_output(sandbox_stdout, sandbox_stderr)
@@ -74,7 +76,7 @@ def run(vendor: Vendor, code: str) -> GuardDecision:
 
     logger.info("%s Layer3 LLM review...", vendor.name)
     llm_verdict, llm_reasoning, risk_level, approved = _llm_review(
-        vendor, code, ast_findings, sandbox_exit, sandbox_stdout, sandbox_stderr
+        vendor, assembled_code, ast_findings, sandbox_exit, sandbox_stdout, sandbox_stderr
     )
 
     logger.info("%s Layer3 verdict=%r risk=%s approved=%s", vendor.name, llm_verdict, risk_level.value, approved)

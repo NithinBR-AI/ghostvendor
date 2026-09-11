@@ -66,6 +66,8 @@ class StateMachine:
         repo: str,
         triggered_by: str | None = None,
         triggering_pr: int | None = None,
+        branch: str | None = None,
+        pr_base_branch: str | None = None,
     ):
         self.state = State.DISCOVER
         self.artifacts = ArtifactStore(repo=repo)
@@ -73,6 +75,8 @@ class StateMachine:
         self.twin_manager = EvilTwinManager()
         self.triggered_by = triggered_by
         self.triggering_pr = triggering_pr
+        self.branch = branch
+        self.pr_base_branch = pr_base_branch
 
     def transition(self, next_state: State) -> None:
         logger.info("%s → %s", self.state.name, next_state.name)
@@ -116,7 +120,7 @@ class StateMachine:
 
     def _discover(self) -> None:
         try:
-            repo_info = clone_repo(self.artifacts.repo)
+            repo_info = clone_repo(self.artifacts.repo, branch=self.branch)
             self.artifacts.repo_info = repo_info
             logger.info("Repo available at: %s (port=%d)", repo_info.local_path, repo_info.port)
 
@@ -301,6 +305,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
                 body=findings_md,
                 draft=True,
                 labels=["ghostvendor", "ghostvendor-findings", "resilience"],
+                base_branch=self.pr_base_branch,
             ))
             self.artifacts.pr_url = pr_url
             logger.info("Findings draft PR opened: %s", pr_url)
@@ -325,17 +330,6 @@ Review the diagnoses above and apply the suggested fix strategies manually.
                 if ep.fixed_source:
                     patched_files[ep.affected_file] = ep.fixed_source
 
-        # Deterministic caller guard: find any source file that calls a patched function
-        # and does bare result["key"] access without an error check. Inject a guard.
-        patched_functions = {p.affected_file: p for p in patch_report.patches}
-        for src_path, src_content in self.artifacts.source_files.items():
-            norm = src_path.replace("\\", "/")
-            if norm in {p.replace("\\", "/") for p in patched_files}:
-                continue  # already patched
-            patched_caller = _inject_caller_error_guard(src_path, src_content, patched_functions)
-            if patched_caller:
-                patched_files[src_path] = patched_caller
-                logger.info("Deterministic caller guard injected: %s", src_path)
 
         # Local re-run: apply patches to a temp copy of the repo, run failed scenarios
         failed_scenarios_by_vendor = {
@@ -502,6 +496,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
                 draft=False,
                 labels=["ghostvendor", "automated", "resilience"],
                 reviewer=self.triggered_by,
+                base_branch=self.pr_base_branch,
             ))
             patch_report.pr_url = pr_url
             self.artifacts.pr_url = pr_url
@@ -557,72 +552,6 @@ def _restore_editable_pth(disabled: list[tuple[Path, str]]) -> None:
         except Exception as e:
             logger.warning("Failed to restore .pth %s: %s", original_name, e)
 
-
-def _inject_caller_error_guard(
-    src_path: str,
-    src_content: str,
-    patched_functions: dict,
-) -> str | None:
-    """
-    Deterministically patch a caller file that does bare result["key"] access after
-    calling a function that now returns an error dict on failure.
-
-    Looks for the pattern:
-        result = <patched_module_fn>(...)
-        ...
-        result["key"]   ← unguarded
-
-    Injects an error guard after the call:
-        if "error" in result:
-            from flask import jsonify
-            return jsonify({"error": result.get("message", "vendor error")}), 503
-
-    Returns the patched source, or None if no injection needed.
-    """
-    import re
-
-    patched_module_stems = {
-        Path(fp).stem for fp in patched_functions
-    }
-
-    # Check if this file calls anything from a patched module
-    calls_patched = any(stem in src_content for stem in patched_module_stems)
-    if not calls_patched:
-        return None
-
-    # Find lines that do result["something"] or result['something'] without an error guard
-    # Simple heuristic: look for `result["` or `result['` where "error" check isn't nearby
-    if '"error" in result' in src_content or "'error' in result" in src_content:
-        return None  # already guarded
-
-    # Check if there's a bare result["..."] access
-    if not re.search(r'result\[["\']', src_content):
-        return None
-
-    # Find the assignment line: result = <something>(...)
-    # Insert guard right after it
-    lines = src_content.splitlines(keepends=True)
-    new_lines = []
-    i = 0
-    inserted = False
-    while i < len(lines):
-        line = lines[i]
-        new_lines.append(line)
-        # Look for: result = <fn_call> that spans this line
-        if re.search(r'^\s*result\s*=\s*\w+\.\w+\(', line) and not inserted:
-            # Detect indentation
-            indent = len(line) - len(line.lstrip())
-            pad = " " * indent
-            new_lines.append(f'{pad}if "error" in result:\n')
-            new_lines.append(f'{pad}    from flask import jsonify\n')
-            new_lines.append(f'{pad}    return jsonify({{"error": result.get("message", "vendor error")}}), 503\n')
-            inserted = True
-        i += 1
-
-    if not inserted:
-        return None
-
-    return "".join(new_lines)
 
 
 def _github_with_retry(fn, retries: int = 3, delay: float = 5.0):
@@ -695,6 +624,7 @@ def _rescore_patched(
 
         for artifact in evil_twins.values():
             twin_manager.launch(vendor_name=artifact.vendor_name, port=artifact.port, code=artifact.code)
+            twin_manager.get(artifact.vendor_name).reset()
 
         twin_env = {
             evil_twins[name].base_url_env: twin_manager.get(name).base_url
@@ -707,78 +637,62 @@ def _rescore_patched(
             if not twin:
                 continue
             payload = (vendor_payloads or {}).get(vendor.name, {"test": "ghostvendor_rescore"})
-            app = DemoAppProcess(
-                app_path=patched_dir,
-                start_command=repo_info.start_command,
-                port=repo_info.port,
-                twin_env=twin_env,
-                extra_env=extra_env,
-            )
             scenarios = []
-            try:
-                with app:
+            # Baseline is proven by VALIDATE — re-testing it here risks poisoning the twin
+            # with a half-open connection when the patched app's own timeout fires.
+            baseline_passed = True
+
+            vendor_failed_scenarios = failed_scenarios_by_vendor.get(vendor.name, []) if failed_scenarios_by_vendor else []
+            modes_to_score = [s.mode for s in vendor_failed_scenarios] if vendor_failed_scenarios else ["502_burst", "timeout", "malformed_json", "429_rate_limit", "empty_response"]
+            # Build a lookup of original failure status/exception per mode so the
+            # rescore uses the same pass criterion as the VALIDATE loop:
+            # - original was timeout/exception → any HTTP response = PASS
+            # - original was HTTP error → status changed from original = PASS, same = FAIL
+            # This ensures a graceful 503 (resilient behavior) scores as PASS, not FAIL.
+            original_by_mode: dict[str, ScenarioResult] = {
+                s.mode: s for s in vendor_failed_scenarios
+            } if vendor_failed_scenarios else {}
+
+            # Each scenario gets its own fresh app so twin port changes from reset() never
+            # cause stale-URL timeouts. twin_env is rebuilt at app boot time per scenario.
+            for mode in modes_to_score:
+                orig = original_by_mode.get(mode)
+                twin.clear_chaos()
+                twin.activate_chaos(mode=mode)
+                fresh_twin_env = {
+                    evil_twins[n].base_url_env: twin_manager.get(n).base_url
+                    for n in evil_twins if twin_manager.get(n)
+                }
+                try:
+                    with DemoAppProcess(
+                        app_path=patched_dir,
+                        start_command=repo_info.start_command,
+                        port=repo_info.port,
+                        twin_env=fresh_twin_env,
+                        extra_env=extra_env,
+                    ) as scenario_app:
+                        status, _, _ = scenario_app.post(vendor.app_route, payload, timeout=_REQUEST_TIMEOUT)
                     twin.clear_chaos()
-                    try:
-                        status, _, _ = app.post(vendor.app_route, payload, timeout=_REQUEST_TIMEOUT)
-                        baseline_passed = status < 400 or status == 503
-                    except Exception:
-                        baseline_passed = False
-
-                    vendor_failed_scenarios = failed_scenarios_by_vendor.get(vendor.name, []) if failed_scenarios_by_vendor else []
-                    modes_to_score = [s.mode for s in vendor_failed_scenarios] if vendor_failed_scenarios else ["502_burst", "timeout", "malformed_json", "429_rate_limit", "empty_response"]
-                    # Build a lookup of original failure status/exception per mode so the
-                    # rescore uses the same pass criterion as the VALIDATE loop:
-                    # - original was timeout/exception → any HTTP response = PASS
-                    # - original was HTTP error → status changed from original = PASS, same = FAIL
-                    # This ensures a graceful 503 (resilient behavior) scores as PASS, not FAIL.
-                    original_by_mode: dict[str, ScenarioResult] = {
-                        s.mode: s for s in vendor_failed_scenarios
-                    } if vendor_failed_scenarios else {}
-
-                    for mode in modes_to_score:
-                        orig = original_by_mode.get(mode)
-                        try:
-                            twin.activate_chaos(mode=mode)
-                            status, _, elapsed_ms = app.post(vendor.app_route, payload, timeout=_REQUEST_TIMEOUT)
-                            clear_failed = False
-                            try:
-                                twin.clear_chaos()
-                            except Exception:
-                                clear_failed = True
-                            if clear_failed or (elapsed_ms and elapsed_ms > 11000):
-                                try:
-                                    twin.reset()
-                                except Exception:
-                                    pass
-                            # Pass if original was a timeout/exception (any HTTP response is better),
-                            # or if status changed from the original failure status.
-                            if orig and orig.exception:
-                                outcome = ScenarioOutcome.PASS
-                            elif orig and orig.http_status and status == orig.http_status:
-                                outcome = ScenarioOutcome.FAIL
-                            elif status < 400:
-                                outcome = ScenarioOutcome.PASS
-                            elif status < 500:
-                                outcome = ScenarioOutcome.DEGRADED
-                            else:
-                                # 5xx but status changed from original — degraded, not full fail
-                                outcome = ScenarioOutcome.DEGRADED
-                        except http_requests.exceptions.Timeout:
-                            try:
-                                twin.clear_chaos()
-                            except Exception:
-                                pass
-                            try:
-                                twin.reset()
-                            except Exception:
-                                pass
-                            outcome = ScenarioOutcome.FAIL
-                        except Exception:
-                            outcome = ScenarioOutcome.FAIL
-                        scenarios.append(ScenarioResult(mode=mode, outcome=outcome))
-            except Exception as e:
-                logger.warning("Rescore: app startup failed for %s: %s", vendor.name, e)
-                baseline_passed = False
+                    # Pass if original was a timeout/exception (any HTTP response is better),
+                    # or if status changed from the original failure status.
+                    if orig and orig.exception:
+                        outcome = ScenarioOutcome.PASS
+                    elif orig and orig.http_status and status == orig.http_status:
+                        outcome = ScenarioOutcome.FAIL
+                    elif status < 400:
+                        outcome = ScenarioOutcome.PASS
+                    elif status < 500:
+                        outcome = ScenarioOutcome.DEGRADED
+                    else:
+                        # 5xx but status changed from original — degraded, not full fail
+                        outcome = ScenarioOutcome.DEGRADED
+                except http_requests.exceptions.Timeout:
+                    twin.clear_chaos()
+                    outcome = ScenarioOutcome.FAIL
+                except Exception:
+                    twin.clear_chaos()
+                    outcome = ScenarioOutcome.FAIL
+                scenarios.append(ScenarioResult(mode=mode, outcome=outcome))
 
             vendor_results.append(VendorResult(
                 vendor_name=vendor.name,
@@ -986,7 +900,9 @@ def _run_patched_validation(
             try:
                 with app:
                     logger.info("Patched app started for %s validation", vendor_name)
-                    twin.clear_chaos()
+                    # Twin is freshly launched — no chaos to clear. Verify it's responsive.
+                    if not twin.is_healthy():
+                        raise RuntimeError(f"{vendor_name} twin not healthy after launch")
 
                     for scenario in failed_scenarios:
                         mode = scenario.mode

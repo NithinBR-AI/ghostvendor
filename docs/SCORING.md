@@ -5,8 +5,9 @@
 ```
 vendor_score = baseline_pts + scenario_score          (capped at 100)
 
-baseline_pts   = 20   if app responds correctly to baseline (non-chaos) traffic
-               = 0    otherwise
+baseline_pts   = 20   always in rescore (VALIDATE already proved the patched app serves
+                      clean traffic; re-testing here would risk corrupting the twin
+                      via half-open connections from the patched client's own timeout)
 
 scenario_score = int( (sum_of_scenario_pts / (n × 16)) × 80 )
 
@@ -35,6 +36,8 @@ This means a vendor that had 2 failing scenarios and had both fixed receives the
 - After patch, both previously-failed scenarios PASS
 - With n=5: score = int(32/80×80)+20 = 52/100 ❌ (misleading — patch is complete)
 - With n=2: score = int(32/32×80)+20 = 100/100 ✓ (correct — all failures fixed)
+
+**Twin lifecycle in rescore:** Each twin is launched fresh and immediately reset before the scenario loop starts. This guarantees a clean process regardless of what the VALIDATE pass left behind — particularly important after `timeout` scenarios where SIGKILL may leave the port briefly in TIME_WAIT.
 
 ## Rescore Outcome Classification
 

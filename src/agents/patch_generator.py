@@ -151,6 +151,16 @@ def _generate_patch(
             "the route must check for that dict and return 503):\n\n" + sibling_patch_context
         )
 
+    # Find callers by searching for the function name as a call site — repo-agnostic.
+    if source_files:
+        caller_sources = {
+            k: v for k, v in source_files.items()
+            if k.replace("\\", "/") != diagnosis.affected_file.replace("\\", "/")
+            and diagnosis.affected_function + "(" in v
+        }
+        if caller_sources:
+            base_payload["caller_files"] = caller_sources
+
     # Unified attempt loop — JSON errors, syntax errors, and zero-diff results
     # all feed the next attempt with compounding context.
     error_context: str | None = None

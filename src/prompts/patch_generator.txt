@@ -37,6 +37,7 @@ Return ONLY a JSON object — no markdown, no explanation, no code fences:
   "affected_file": "<repo-relative path — same as input>",
   "fix_strategy": "<strategy used>",
   "fixed_source": "<complete contents of the fixed file — ALL lines, not just the changed function>",
+  "extra_patches": [{"affected_file": "<repo-relative path>", "fixed_source": "<complete file contents>"}],
   "pr_title": "fix(<vendor-lowercase>): <one-line description of what was fixed>",
   "pr_description": "<markdown — 3 sections: ## What Failed, ## Fix Applied, ## Why This Strategy>"
 }
@@ -51,3 +52,4 @@ Return ONLY a JSON object — no markdown, no explanation, no code fences:
 - The fixed_source must be valid Python — ast.parse() must succeed
 - Output ONLY the JSON object — nothing else, no prose, no thinking
 - Keep pr_description SHORT — one sentence per section (## What Failed, ## Fix Applied, ## Why This Strategy). No bullets, no code blocks. Brevity is required to avoid truncation.
+- If your fix changes the return contract of `affected_function` (e.g. now returns `{"error": ...}` on failure), search `source_files` for any file that calls `affected_function` directly (look for `affected_function(` as a substring). For each caller found, check if it does bare `result["key"]` access with no `"error" in result` guard — if so, patch it to guard against the error dict before accessing keys. Return each caller fix as an entry in `extra_patches` with the complete fixed file.

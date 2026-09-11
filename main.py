@@ -34,7 +34,16 @@ def main():
         help="Triggering PR number — referenced in the fix PR body",
         default=None,
     )
+    parser.add_argument(
+        "--branch",
+        metavar="BRANCH",
+        help="Branch to scan (defaults to repo default branch). Auto-resolved from --pr when omitted.",
+        default=None,
+    )
     args = parser.parse_args()
+
+    branch = args.branch
+    pr_base_branch = None
 
     # Draft PR gate — exit immediately if the triggering PR is still a draft.
     # Streamlit monitor passes --pr when triggering; without it the gate is a no-op.
@@ -46,13 +55,20 @@ def main():
             if triggering_pr.draft:
                 logger.info("Triggering PR #%d is a draft — skipping pipeline run", args.pr)
                 sys.exit(0)
+            if not branch:
+                branch = triggering_pr.head.ref
+                logger.info("Branch resolved from PR #%d: %s", args.pr, branch)
+            pr_base_branch = branch or triggering_pr.base.ref
+            logger.info("Fix PR will target base branch: %s", pr_base_branch)
         except Exception as e:
-            logger.warning("Could not check draft status of PR #%d: %s — proceeding", args.pr, e)
+            logger.warning("Could not check PR #%d: %s — proceeding", args.pr, e)
 
     machine = StateMachine(
         repo=args.repo,
         triggered_by=args.triggered_by,
         triggering_pr=args.pr,
+        branch=branch,
+        pr_base_branch=pr_base_branch,
     )
     machine.run()
 

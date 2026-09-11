@@ -64,9 +64,11 @@ def create_pr(
     draft: bool = False,
     labels: list[str] | None = None,
     reviewer: str | None = None,
+    base_branch: str | None = None,
 ) -> str:
     r = get_repo(repo)
-    pr = r.create_pull(title=title, body=body, head=branch, base=r.default_branch, draft=draft)
+    base = base_branch or r.default_branch
+    pr = r.create_pull(title=title, body=body, head=branch, base=base, draft=draft)
     if labels:
         _ensure_labels(r, labels)
         pr.add_to_labels(*labels)

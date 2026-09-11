@@ -9,6 +9,7 @@ The generated code is written to a temp file and returned as a string
 for Agent 3 (Context Guard) to inspect before execution.
 """
 
+import ast
 import json
 import logging
 import re
@@ -139,13 +140,12 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     if not code:
         raise ValueError(f"Agent 2 returned empty output for vendor: {vendor.name}")
 
-    # Deterministic fix: ensure uvicorn.run uses the app object, not a string module reference.
-    code = _fix_uvicorn_run(code)
-    # Deterministic fix: health endpoint must not call log_request() with a hand-crafted scope.
-    code = _fix_health_endpoint(code)
-    # Deterministic fix: time.sleep() inside vendor route handlers blocks the uvicorn event loop,
-    # causing /chaos DELETE to hang while a timeout chaos request is in-flight.
-    code = _fix_blocking_sleep(code)
+    # Prepend port as a comment so _assemble_twin() in evil_twin_runner can read it
+    code = f"# port: {port}\n" + code
+
+    # Strip any _chaos_state/_chaos_lock from handler signatures — FastAPI cannot resolve
+    # these as dependencies and will crash. They are module-level globals, not parameters.
+    code = _fix_bad_chaos_params(code, vendor.name)
 
     # Auto-repair: retry once with the syntax error as context
     for attempt in range(2):
@@ -167,53 +167,38 @@ def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     return code
 
 
-def _fix_uvicorn_run(code: str) -> str:
+_HARNESS_GLOBALS = {"_chaos_state", "_chaos_lock"}
+
+
+def _fix_bad_chaos_params(code: str, vendor_name: str) -> str:
     """
-    Replace uvicorn.run("module:app", ...) with uvicorn.run(app, ...).
-    LLMs generate string references that break when the file is saved under a different name.
+    Remove _chaos_state/_chaos_lock from handler function signatures if the LLM
+    declared them as parameters. FastAPI treats unknown parameters as dependency
+    injections and raises FastAPIError at startup. These are module-level globals
+    injected by the harness — handlers must reference them directly, not via args.
     """
-    return re.sub(
-        r'uvicorn\.run\(\s*["\'][^"\']+:app["\']',
-        'uvicorn.run(app',
-        code,
+    _DEF_RE = re.compile(
+        r"^(async\s+def\s+\w+\s*\()([^)]*)\)",
+        re.MULTILINE,
     )
 
+    def _strip_chaos_args(m: re.Match) -> str:
+        prefix = m.group(1)
+        params_raw = m.group(2)
+        params = [p.strip() for p in params_raw.split(",") if p.strip()]
+        cleaned = [
+            p for p in params
+            if not any(p == g or p.startswith(g + ":") or p.startswith(g + " ") for g in _HARNESS_GLOBALS)
+        ]
+        result = prefix + ", ".join(cleaned) + ")"
+        if cleaned != params:
+            removed = set(p.split(":")[0].strip() for p in params) - set(p.split(":")[0].strip() for p in cleaned)
+            logger.warning(
+                "%s: removed harness globals from handler signature: %s", vendor_name, removed
+            )
+        return result
 
-def _fix_health_endpoint(code: str) -> str:
-    # Replace any /health or /healthz route body to a safe minimal one.
-    # LLMs sometimes call log_request() there with a hand-crafted scope dict that
-    # is missing required keys (e.g. 'headers'), causing a KeyError on health checks.
-    code = re.sub(
-        r'(@app\.get\(["\']/(health|healthz)["\'][^)]*\)\s*\nasync def \w+\([^)]*\):).*?(?=\n@|\nif __name__|\Z)',
-        lambda m: m.group(1) + '\n    return {"status": "ok"}\n',
-        code,
-        flags=re.DOTALL,
-    )
-    return code
-
-
-def _fix_blocking_sleep(code: str) -> str:
-    # Replace time.sleep() with await asyncio.sleep() everywhere in the generated twin.
-    # LLMs sometimes generate blocking time.sleep() in vendor endpoint handlers despite
-    # prompt instructions. When chaos timeout mode fires and time.sleep() is used, the
-    # uvicorn event loop blocks, preventing /chaos DELETE from being processed until the
-    # sleep completes (causing visible hangs during VALIDATE).
-    #
-    # Strategy: replace ALL time.sleep() calls. Control routes (/chaos, /health, /) never
-    # sleep intentionally, so this replacement is safe everywhere in the file.
-    if 'time.sleep(' not in code:
-        return code
-
-    code = re.sub(r'\btime\.sleep\(', 'await asyncio.sleep(', code)
-
-    # Ensure asyncio is imported
-    if 'import asyncio' not in code:
-        code = re.sub(r'^(import time\b)', r'\1\nimport asyncio', code, count=1, flags=re.MULTILINE)
-        if 'import asyncio' not in code:
-            # Fallback: prepend at top
-            code = 'import asyncio\n' + code
-
-    return code
+    return _DEF_RE.sub(_strip_chaos_args, code)
 
 
 def _validate_syntax(code: str, vendor_name: str) -> None:

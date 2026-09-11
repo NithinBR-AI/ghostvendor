@@ -7,6 +7,9 @@ PYTHON      := .venv/Scripts/python.exe
 run:
 	$(PYTHON) main.py $(DEMO_REPO) --triggered-by $(TRIGGER_BY)
 
+run-pr:
+	$(PYTHON) main.py $(DEMO_REPO) --triggered-by $(TRIGGER_BY) --pr $(PR) --branch $(BRANCH)
+
 run-demo: run
 
 install:
