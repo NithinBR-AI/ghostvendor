@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
 from pipeline.state_machine import StateMachine
+from tools.guardrails import shallow_check as guardrail_check
 from utils.logging_config import configure as configure_logging
 
 load_dotenv()
@@ -62,6 +63,11 @@ def main():
             logger.info("Fix PR will target base branch: %s", pr_base_branch)
         except Exception as e:
             logger.warning("Could not check PR #%d: %s — proceeding", args.pr, e)
+
+    result = guardrail_check(args.repo)
+    if not result.passed:
+        logger.error("Pre-flight check failed: %s", result.message)
+        sys.exit(1)
 
     machine = StateMachine(
         repo=args.repo,

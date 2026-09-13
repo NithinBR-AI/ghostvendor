@@ -79,7 +79,7 @@ class StateMachine:
         self.pr_base_branch = pr_base_branch
 
     def transition(self, next_state: State) -> None:
-        logger.info("%s → %s", self.state.name, next_state.name)
+        logger.info("%s -> %s", self.state.name, next_state.name)
         self.state = next_state
 
     def fail(self, reason: str) -> None:
@@ -124,6 +124,12 @@ class StateMachine:
             self.artifacts.repo_info = repo_info
             logger.info("Repo available at: %s (port=%d)", repo_info.local_path, repo_info.port)
 
+            from tools.guardrails import deep_check
+            guard = deep_check(self.artifacts.repo, repo_info.local_path)
+            if not guard.passed:
+                self.fail(f"Pre-flight check failed: {guard.message}")
+                return
+
             spec, source_files = detective.run(repo=self.artifacts.repo, local_path=repo_info.local_path)
             self.artifacts.vendor_spec = spec
             self.artifacts.source_files = source_files
@@ -138,7 +144,7 @@ class StateMachine:
             twins = twin_generator.run(self.artifacts.vendor_spec)
             self.artifacts.evil_twins = twins
             for name, artifact in twins.items():
-                logger.info("Evil Twin generated: %s → port %d", name, artifact.port)
+                logger.info("Evil Twin generated: %s -> port %d", name, artifact.port)
             self.transition(State.GUARD)
         except Exception as e:
             self.fail(f"Agent 2 (Twin Generator) failed: {e}")
@@ -157,7 +163,7 @@ class StateMachine:
                 logger.info("Context Guard: %s", decision.summary)
 
                 if decision.sandbox_skipped:
-                    logger.warning("Sandbox skipped for %s — approved on AST+LLM only", name)
+                    logger.warning("Sandbox skipped for %s - approved on AST+LLM only", name)
 
                 if not decision.approved:
                     blocked.append(f"{name} ({decision.risk_level.value}: {decision.llm_verdict})")
@@ -253,7 +259,7 @@ class StateMachine:
         if self.artifacts.diagnosis_report:
             for d in self.artifacts.diagnosis_report.diagnoses:
                 diagnosis_lines.append(
-                    f"- **{d.vendor}** (`{d.affected_file}` → `{d.affected_function}`): "
+                    f"- **{d.vendor}** (`{d.affected_file}` -> `{d.affected_function}`): "
                     f"{d.fix_strategy.value} — {d.root_cause}"
                 )
 
@@ -366,7 +372,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
         if not vr.all_passed:
             self.retry_count += 1
             if self.retry_count >= self.MAX_RETRIES:
-                logger.warning("Exceeded %d remediation attempts — opening findings-only draft PR", self.MAX_RETRIES)
+                logger.warning("Exceeded %d remediation attempts - opening findings-only draft PR", self.MAX_RETRIES)
                 self._open_findings_pr(vr.failure_summary)
                 self.fail(f"Exceeded {self.MAX_RETRIES} remediation attempts. Findings PR: {self.artifacts.pr_url or 'failed to open'}")
                 return
@@ -412,7 +418,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
         )
         self.artifacts.resilience_score_after = score_after
         logger.info(
-            "Resilience score: %d/100 → %d/100 after patch",
+            "Resilience score: %d/100 -> %d/100 after patch",
             self.artifacts.resilience_score_before, score_after,
         )
 
@@ -430,7 +436,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
                     content=patched_files[p.affected_file],
                     message=f"fix({p.vendor.lower()}): {p.pr_title}",
                 ))
-                logger.info("Committed patch for %s → %s", patch.vendor, patch.affected_file)
+                logger.info("Committed patch for %s -> %s", patch.vendor, patch.affected_file)
                 for ep in patch.extra_patches:
                     _github_with_retry(lambda e=ep, p=patch: github_client.commit_file(
                         repo=repo,
@@ -439,7 +445,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
                         content=e.fixed_source,
                         message=f"fix({p.vendor.lower()}): patch caller {e.affected_file}",
                     ))
-                    logger.info("Committed extra patch for %s → %s", patch.vendor, ep.affected_file)
+                    logger.info("Committed extra patch for %s -> %s", patch.vendor, ep.affected_file)
 
             # Build context header with scores, failed scenarios, and retry info
             score_before = self.artifacts.resilience_score_before
@@ -537,7 +543,7 @@ def _disable_editable_pth(repo_info: "RepoInfo") -> list[tuple[Path, str]]:
                 backup = pth_file.with_suffix(".pth.gv_disabled")
                 pth_file.rename(backup)
                 disabled.append((backup, pth_file.name))
-                logger.info("Disabled editable .pth: %s → %s", pth_file.name, backup.name)
+                logger.info("Disabled editable .pth: %s -> %s", pth_file.name, backup.name)
 
     return disabled
 
@@ -564,7 +570,7 @@ def _github_with_retry(fn, retries: int = 3, delay: float = 5.0):
         except Exception as e:
             last_exc = e
             if attempt < retries - 1:
-                logger.warning("GitHub call failed (attempt %d/%d): %s — retrying in %.0fs", attempt + 1, retries, e, delay)
+                logger.warning("GitHub call failed (attempt %d/%d): %s - retrying in %.0fs", attempt + 1, retries, e, delay)
                 time.sleep(delay)
     raise last_exc
 
@@ -646,8 +652,8 @@ def _rescore_patched(
             modes_to_score = [s.mode for s in vendor_failed_scenarios] if vendor_failed_scenarios else ["502_burst", "timeout", "malformed_json", "429_rate_limit", "empty_response"]
             # Build a lookup of original failure status/exception per mode so the
             # rescore uses the same pass criterion as the VALIDATE loop:
-            # - original was timeout/exception → any HTTP response = PASS
-            # - original was HTTP error → status changed from original = PASS, same = FAIL
+            # - original was timeout/exception -> any HTTP response = PASS
+            # - original was HTTP error -> status changed from original = PASS, same = FAIL
             # This ensures a graceful 503 (resilient behavior) scores as PASS, not FAIL.
             original_by_mode: dict[str, ScenarioResult] = {
                 s.mode: s for s in vendor_failed_scenarios
@@ -719,7 +725,7 @@ def _rescore_patched(
             scenario_pts = sum(pts_map[s.outcome] for s in vr.scenarios)
             scenario_score = int((scenario_pts / (n * 16)) * 80)
             vendor_score = min(100, baseline_pts + scenario_score)
-            logger.info("Rescore: %s → %d/100 (%d scenarios, baseline=%s)", vr.vendor_name, vendor_score, n, vr.baseline_passed)
+            logger.info("Rescore: %s -> %d/100 (%d scenarios, baseline=%s)", vr.vendor_name, vendor_score, n, vr.baseline_passed)
             weighted_sum += vendor_score * vr.criticality_score
         score = int(weighted_sum / total_weight) if total_weight else 0
         logger.info("Rescore complete: %d/100", score)
@@ -742,13 +748,13 @@ class ValidationResult:
     the patch was never tested) from patch failures (twin ran, patch still wrong).
 
     VALIDATE uses this distinction to route correctly:
-    - only infra failures → retry VALIDATE (don't regenerate patches, just re-test)
-    - patch failures → REMEDIATE for those vendors only; skip validated vendors
-    - both → retry VALIDATE first (fixing infra may clear ambiguous patch failures)
+    - only infra failures -> retry VALIDATE (don't regenerate patches, just re-test)
+    - patch failures -> REMEDIATE for those vendors only; skip validated vendors
+    - both -> retry VALIDATE first (fixing infra may clear ambiguous patch failures)
     """
     validated_vendors: set[str]           # vendors whose scenarios all passed
-    infra_failures: dict[str, str]        # vendor → reason (twin process failure)
-    patch_failures: dict[str, str]        # vendor → reason (patch semantically wrong)
+    infra_failures: dict[str, str]        # vendor -> reason (twin process failure)
+    patch_failures: dict[str, str]        # vendor -> reason (patch semantically wrong)
 
     @property
     def all_passed(self) -> bool:
@@ -941,15 +947,15 @@ def _run_patched_validation(
                             original_status = scenario.http_status
 
                             if original_was_timeout:
-                                logger.info("Validation PASS: %s/%s → HTTP %d in %.0fms (was timeout)", vendor_name, mode, status, elapsed_ms)
+                                logger.info("Validation PASS: %s/%s -> HTTP %d in %.0fms (was timeout)", vendor_name, mode, status, elapsed_ms)
                             elif original_status is not None and status == original_status:
                                 patch_failures[vendor_name] = (
                                     patch_failures.get(vendor_name, "") +
                                     f"{vendor_name}/{mode}: still HTTP {status} after patch; "
                                 )
-                                logger.warning("Validation FAIL: %s/%s → HTTP %d (same as before)", vendor_name, mode, status)
+                                logger.warning("Validation FAIL: %s/%s -> HTTP %d (same as before)", vendor_name, mode, status)
                             else:
-                                logger.info("Validation PASS: %s/%s → HTTP %d in %.0fms", vendor_name, mode, status, elapsed_ms)
+                                logger.info("Validation PASS: %s/%s -> HTTP %d in %.0fms", vendor_name, mode, status, elapsed_ms)
 
                         except http_requests.exceptions.Timeout:
                             try:
@@ -960,7 +966,7 @@ def _run_patched_validation(
                                 patch_failures.get(vendor_name, "") +
                                 f"{vendor_name}/{mode}: still timing out after patch; "
                             )
-                            logger.warning("Validation FAIL: %s/%s → Timeout", vendor_name, mode)
+                            logger.warning("Validation FAIL: %s/%s -> Timeout", vendor_name, mode)
                             try:
                                 vendor_twin_manager.stop_all()
                                 vendor_twin_manager.launch(
@@ -976,7 +982,7 @@ def _run_patched_validation(
                                 patch_failures.get(vendor_name, "") +
                                 f"{vendor_name}/{mode}: exception {type(e).__name__}: {e}; "
                             )
-                            logger.warning("Validation FAIL: %s/%s → %s", vendor_name, mode, e)
+                            logger.warning("Validation FAIL: %s/%s -> %s", vendor_name, mode, e)
             except Exception as e:
                 # Twin or app startup failure — infrastructure, not a semantic patch failure.
                 # The patch was never actually tested; route back to VALIDATE retry, not REMEDIATE.
