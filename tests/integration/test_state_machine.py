@@ -6,7 +6,8 @@ and artifact handoffs — not LLM output content.
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock, PropertyMock, call
+from pipeline.state_machine import ValidationResult
 from pipeline.state_machine import StateMachine, State
 from models.vendor_spec import VendorSpec
 from models.resilience_result import (
@@ -162,3 +163,51 @@ class TestFindingsFallback:
 
         assert machine.state == State.FAILED
         mock_findings_pr.assert_called_once()
+
+
+class TestValidationResult:
+    """ValidationResult correctly classifies infra vs patch failures."""
+
+    def test_all_passed_when_no_failures(self):
+        vr = ValidationResult(
+            validated_vendors={"stripe", "sendgrid"},
+            infra_failures={},
+            patch_failures={},
+        )
+        assert vr.all_passed is True
+
+    def test_all_passed_false_when_infra_failure(self):
+        vr = ValidationResult(
+            validated_vendors=set(),
+            infra_failures={"stripe": "stripe: failed to launch twin: port in use"},
+            patch_failures={},
+        )
+        assert vr.all_passed is False
+
+    def test_all_passed_false_when_patch_failure(self):
+        vr = ValidationResult(
+            validated_vendors=set(),
+            infra_failures={},
+            patch_failures={"stripe": "stripe/timeout: still timing out after patch; "},
+        )
+        assert vr.all_passed is False
+
+    def test_failure_summary_combines_both(self):
+        vr = ValidationResult(
+            validated_vendors=set(),
+            infra_failures={"stripe": "stripe: infra failure - boom"},
+            patch_failures={"sendgrid": "sendgrid/timeout: still timing out; "},
+        )
+        summary = vr.failure_summary
+        assert "stripe" in summary
+        assert "sendgrid" in summary
+
+    def test_infra_and_patch_failures_are_independent(self):
+        vr = ValidationResult(
+            validated_vendors={"sendgrid"},
+            infra_failures={"stripe": "stripe: failed to launch twin: port in use"},
+            patch_failures={},
+        )
+        assert "stripe" in vr.infra_failures
+        assert "stripe" not in vr.patch_failures
+        assert "sendgrid" in vr.validated_vendors

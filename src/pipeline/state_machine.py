@@ -884,8 +884,8 @@ def _run_patched_validation(
                 )
                 logger.info("Launched fresh twin for %s validation on port %d", vendor_name, artifact.port)
             except Exception as e:
-                failures.append(f"{vendor_name}: failed to launch twin: {e}")
-                logger.error("Validation FAIL: %s twin launch failed — %s", vendor_name, e)
+                infra_failures[vendor_name] = f"{vendor_name}: failed to launch twin: {e}"
+                logger.error("Validation FAIL: %s twin launch failed - %s", vendor_name, e)
                 continue
 
             twin = vendor_twin_manager.get(vendor_name)
