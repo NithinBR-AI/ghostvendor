@@ -3,6 +3,7 @@ import logging
 import shutil
 import tempfile
 import time
+import uuid
 from enum import Enum, auto
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,35 @@ from tools import github_client
 from tools.demo_app_runner import DemoAppProcess
 from tools.evil_twin_runner import EvilTwinManager, EvilTwinProcess
 from tools.repo_cloner import clone as clone_repo, RepoInfo
+
+try:
+    from dashboard import db as _dash_db
+except Exception:
+    _dash_db = None
+
+
+def _db_start_run(run_id, repo, pr_number, branch, triggered_by):
+    if _dash_db:
+        try:
+            _dash_db.start_run(run_id, repo, pr_number, branch, triggered_by)
+        except Exception:
+            pass
+
+
+def _db_record_event(run_id, state, status, context_msg=None, elapsed_ms=None):
+    if _dash_db:
+        try:
+            _dash_db.record_event(run_id, state, status, context_msg, elapsed_ms)
+        except Exception:
+            pass
+
+
+def _db_finish_run(run_id, status, score_before, score_after, pr_url):
+    if _dash_db:
+        try:
+            _dash_db.finish_run(run_id, status, score_before, score_after, pr_url)
+        except Exception:
+            pass
 
 
 class State(Enum):
@@ -77,12 +107,19 @@ class StateMachine:
         self.triggering_pr = triggering_pr
         self.branch = branch
         self.pr_base_branch = pr_base_branch
+        self.run_id = str(uuid.uuid4())
+        self._state_start_ts: float = time.monotonic()
 
     def transition(self, next_state: State) -> None:
         logger.info("%s -> %s", self.state.name, next_state.name)
+        if next_state != State.FAILED:
+            elapsed_ms = int((time.monotonic() - self._state_start_ts) * 1000)
+            _db_record_event(self.run_id, self.state.name, "complete", elapsed_ms=elapsed_ms)
         self.state = next_state
+        self._state_start_ts = time.monotonic()
 
     def fail(self, reason: str) -> None:
+        _db_record_event(self.run_id, self.state.name, "failed", context_msg=reason[:200])
         logger.error("FAILED: %s", reason)
         self.twin_manager.stop_all()
         # Safety net: if we have resilience findings but no PR yet, open a findings PR
@@ -96,11 +133,19 @@ class StateMachine:
 
     def run(self) -> None:
         logger.info("Starting on repo: %s", self.artifacts.repo)
+        _db_start_run(self.run_id, self.artifacts.repo, self.triggering_pr, self.branch, self.triggered_by)
         try:
             while self.state not in (State.DONE, State.FAILED):
                 self._step()
         finally:
             self.twin_manager.stop_all()
+            _db_finish_run(
+                self.run_id,
+                "done" if self.state == State.DONE else "failed",
+                self.artifacts.resilience_score_before or None,
+                self.artifacts.resilience_score_after or None,
+                self.artifacts.pr_url or None,
+            )
 
     def _step(self) -> None:
         if self.state == State.DISCOVER:

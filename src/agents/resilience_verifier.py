@@ -54,7 +54,7 @@ def run(
     twin_manager: EvilTwinManager,
     repo_info: RepoInfo,
     source_files: dict[str, str] | None = None,
-) -> ResilienceReport:
+) -> tuple[ResilienceReport, dict]:
 
     extra_env = {**repo_info.extra_env, **_fake_credentials(spec)}
     app_path = repo_info.local_path
