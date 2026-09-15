@@ -221,9 +221,9 @@ With triggering PR context (mirrors what GitHub Actions sends):
 .venv\Scripts\python.exe main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
 ```
 
-### 6. GitHub Actions trigger (CI integration)
+### 6. GitHub Actions trigger (demo only)
 
-Open a pull request on `NithinBR-AI/ghostvendor-demo-app` — the self-hosted runner picks it up automatically and the pipeline runs end-to-end. The dashboard reflects the live run in real time.
+The repo includes a GitHub Actions workflow (`.github/workflows/ghostvendor.yml`) that fires on `pull_request` events and calls `main.py` with the PR context. The self-hosted runner is registered on the author's machine — opening a PR on `NithinBR-AI/ghostvendor-demo-app` will trigger a live run during the demo, but cannot be reproduced by a reviewer without registering their own runner. Steps 1–5 above are fully self-contained and reproducible.
 
 ---
 
