@@ -170,15 +170,21 @@ pip install -e ".[dev]"
 ### 2. Configure environment
 
 ```bash
+# Linux / macOS
 cp .env.example .env
+
+# Windows PowerShell
+Copy-Item .env.example .env
 ```
 
 Open `.env` and fill in:
 
 ```
-NEBIUS_API_KEY=...        # Nebius Token Factory API key
-GITHUB_TOKEN=...          # GitHub personal access token (repo + PR scope)
-TAVILY_API_KEY=...        # Tavily API key (optional — skipped gracefully if not set)
+NEBIUS_API_KEY=...          # Nebius Token Factory API key — all LLM calls go through this
+GITHUB_TOKEN=...            # GitHub personal access token (repo + pull_request scopes)
+NEBIUS_PROJECT_ID=...       # Nebius project ID — required for Contree sandbox execution
+TAVILY_API_KEY=...          # Tavily API key — optional, skipped gracefully if not set
+GHOSTVENDOR_LOCAL_DEV=1     # Set to 1 for local runs; omit in GitHub Actions (uses workflow env)
 ```
 
 ### 3. Run unit tests
