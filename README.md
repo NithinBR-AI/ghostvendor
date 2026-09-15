@@ -293,16 +293,37 @@ These constraints reflect deliberate scoping for the hackathon submission, not f
 
 ---
 
-## NVIDIA & Nebius Usage
+## NVIDIA & Nebius
 
-| Tier | Model | Used for |
-|---|---|---|
-| Ultra | `nvidia/Nemotron-3-Ultra-550b-a55b` | Vendor enrichment, attack planning, Sense→Reason→Act decisions, root-cause analysis, Evil Twin code generation |
-| DeepSeek | `deepseek-ai/DeepSeek-V4-Pro` | Patch generation (Agent 6) — chosen for reliable structured JSON output at high token counts |
-| Super | `nvidia/nemotron-3-super-120b-a12b` | Fallback for Evil Twin generation |
-| Nano | `nvidia/Nemotron-3_5-Lightning` | Fast structured output for Context Guard LLM policy review |
+### NVIDIA Nemotron Models
 
-Each tier has a fallback model. All calls go through `https://api.tokenfactory.nebius.com/v1/` (OpenAI-compatible).
+GhostVendor uses the full Nemotron tier stack, with each model matched to what that agent actually needs:
+
+| Model | Tier | Agent | Why this model |
+|---|---|---|---|
+| `nvidia/Nemotron-3-Ultra-550b-a55b` | Ultra | A1, A2, A4, A5 | 550B parameters — needed for complex multi-step reasoning: tracing vendor criticality from env vars through source code, planning a chaos attack sequence, making mid-attack Sense→Reason→Act decisions, and producing root-cause diagnoses with specific function names and fix strategies |
+| `nvidia/nemotron-3-super-120b-a12b` | Super | A2 fallback | Activates when Ultra is rate-limited or slow — same Evil Twin generation task at 120B, preserving the 5-mode chaos harness structure |
+| `nvidia/Nemotron-3_5-Lightning` | Nano | A3 | Context Guard needs speed, not depth — Nano processes the security gate in ~1s vs 8–12s for Ultra, and the task (classify code intent as SAFE/LOW/MEDIUM/HIGH/BLOCKED) is well-suited to a smaller model with a tight structured output schema |
+| `deepseek-ai/DeepSeek-V4-Pro` | — | A6 | Patch generation sends the full source file (2,000–4,000 tokens input) and expects a complete fixed file back (same scale output). DeepSeek-V4-Pro on Token Factory consistently returns valid JSON at these token counts where Ultra occasionally truncates |
+
+**Why Nemotron Ultra over other frontier models for A4:** The Resilience Verifier runs multiple LLM calls in a single pipeline run — one to plan the attack, one mid-attack to decide whether to continue, escalate, or stop after observing each scenario result. Ultra's instruction-following fidelity at each decision point prevents the cascading hallucinations that shorter models produce when the tool context grows large (30+ scenarios across multiple vendors).
+
+### Nebius Token Factory
+
+Token Factory is the single inference endpoint for all five models in the pipeline — `https://api.tokenfactory.nebius.com/v1/` with an OpenAI-compatible API. This meant:
+
+- **Zero integration friction** — `nebius_client.py` is 80 lines. Every agent calls the same `ultra()`, `nano()`, `deepseek_pro()`, or `super_()` wrapper. Switching a model is one line change.
+- **Tier selection under one key** — Ultra, Super, Nano, and DeepSeek all authenticate with a single `NEBIUS_API_KEY`. No per-model credentials, no separate rate limit pools to track.
+- **Speed for iteration** — Token Factory latency on Ultra is low enough that the tight edit→run→observe loop is feasible during development. Each LLM call in the pipeline returns fast enough that the bottleneck is process startup and HTTP chaos injection, not inference wait time.
+- **Fallback model switching** — Super activates automatically when Ultra hits a transient error. Because both are on the same endpoint, the fallback is a model name swap, not a credentials or base-URL change.
+
+### Nebius Contree Sandbox
+
+Agent 2 generates Python code (the Evil Twin FastAPI server). That code runs on the developer's machine — but only after Agent 3 clears it through the Contree sandbox first.
+
+Contree is a Nebius-hosted isolated execution environment. GhostVendor sends the generated Evil Twin to Contree, runs it there, and observes whether it attempts network exfiltration, subprocess spawning, sensitive file access, or any other behavior that AST analysis missed. If Contree flags anything, the twin is discarded and the pipeline halts before the code ever reaches the local environment.
+
+This is the only part of the pipeline that is not reproducible with any commodity cloud service — it is a Nebius-specific capability that makes the "execute LLM-generated code safely" guarantee possible.
 
 ---
 
