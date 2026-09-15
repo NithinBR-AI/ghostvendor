@@ -223,7 +223,9 @@ With triggering PR context (mirrors what GitHub Actions sends):
 
 ### 6. GitHub Actions trigger (demo only)
 
-The repo includes a GitHub Actions workflow (`.github/workflows/ghostvendor.yml`) that fires on `pull_request` events and calls `main.py` with the PR context. The self-hosted runner is registered on the author's machine — opening a PR on `NithinBR-AI/ghostvendor-demo-app` will trigger a live run during the demo, but cannot be reproduced by a reviewer without registering their own runner. Steps 1–5 above are fully self-contained and reproducible.
+`NithinBR-AI/ghostvendor-demo-app` has a CI workflow (`.github/workflows/ci.yml`) that runs on pull requests. A self-hosted runner registered on the author's machine picks up those jobs and calls `main.py` with the PR context — opening a PR on the demo-app triggers a live GhostVendor run during the demo.
+
+This is not reproducible by a reviewer without registering their own self-hosted runner. Steps 1–5 above are fully self-contained and reproducible independently.
 
 ---
 
