@@ -46,6 +46,22 @@ def _db_record_event(run_id, state, status, context_msg=None, elapsed_ms=None):
             pass
 
 
+def _db_update_score_before(run_id, score_before):
+    if _dash_db:
+        try:
+            _dash_db.update_score_before(run_id, score_before)
+        except Exception:
+            pass
+
+
+def _db_update_score_after(run_id, score_after):
+    if _dash_db:
+        try:
+            _dash_db.update_score_after(run_id, score_after)
+        except Exception:
+            pass
+
+
 def _db_finish_run(run_id, status, score_before, score_after, pr_url):
     if _dash_db:
         try:
@@ -148,6 +164,7 @@ class StateMachine:
             )
 
     def _step(self) -> None:
+        _db_record_event(self.run_id, self.state.name, "active")
         if self.state == State.DISCOVER:
             self._discover()
         elif self.state == State.ATTACK:
@@ -233,6 +250,7 @@ class StateMachine:
             )
             self.artifacts.resilience_report = report
             self.artifacts.resilience_score_before = report.overall_score
+            _db_update_score_before(self.run_id, report.overall_score)
             self.artifacts.extra["vendor_payloads"] = vendor_payloads
             logger.info("Resilience score BEFORE patch: %d/100 | Failures: %d", report.overall_score, len(report.all_failed_scenarios))
             self.transition(State.DIAGNOSE)
@@ -462,6 +480,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
             failed_scenarios_by_vendor=failed_scenarios_by_vendor,
         )
         self.artifacts.resilience_score_after = score_after
+        _db_update_score_after(self.run_id, score_after)
         logger.info(
             "Resilience score: %d/100 -> %d/100 after patch",
             self.artifacts.resilience_score_before, score_after,

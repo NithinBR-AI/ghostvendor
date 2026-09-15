@@ -396,14 +396,14 @@ var badges=[
 ];
 var bx=W-20;
 badges.slice().reverse().forEach(function(b){{
-  var tw=b.label.length*5.8+16;
+  var tw=b.label.length*7.2+20;
   bx-=tw;
-  svg.append("rect").attr("x",bx).attr("y",10).attr("width",tw).attr("height",18)
-    .attr("rx",9).attr("fill",b.bg).attr("stroke",b.bc).attr("stroke-width","0.8");
-  svg.append("text").attr("x",bx+tw/2).attr("y",22.5).attr("text-anchor","middle")
-    .attr("font-size","8").attr("font-weight","700").attr("fill",b.col)
+  svg.append("rect").attr("x",bx).attr("y",8).attr("width",tw).attr("height",24)
+    .attr("rx",12).attr("fill",b.bg).attr("stroke",b.bc).attr("stroke-width","1");
+  svg.append("text").attr("x",bx+tw/2).attr("y",24).attr("text-anchor","middle")
+    .attr("font-size","11").attr("font-weight","700").attr("fill",b.col)
     .attr("font-family","JetBrains Mono,monospace").text(b.label);
-  bx-=6;
+  bx-=8;
 }});
 
 // Watermark — anchored to bottom of visible area (H - 60 clears any clipping)

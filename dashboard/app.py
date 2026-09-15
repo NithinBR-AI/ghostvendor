@@ -183,7 +183,7 @@ def _tab_live():
             f"</div>",
             unsafe_allow_html=True,
         )
-        html = viz.render(state, run.get("score_before"), run.get("score_after"), height=600)
+        html = viz.render(state, run.get("score_before"), run.get("score_after") or None, height=600)
         st.components.v1.html(html, height=600, scrolling=False)
 
     else:
@@ -204,7 +204,7 @@ def _tab_live():
             if finished:
                 try:
                     ft = datetime.datetime.fromisoformat(finished.replace("Z", ""))
-                    if (datetime.datetime.utcnow() - ft).total_seconds() < 90:
+                    if (datetime.datetime.utcnow() - ft).total_seconds() < 600:
                         show_scores = True
                 except Exception:
                     pass

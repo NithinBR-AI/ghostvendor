@@ -48,6 +48,16 @@ def record_event(run_id: str, state: str, status: str, context_msg: str | None =
         )
 
 
+def update_score_before(run_id: str, score_before: int) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE runs SET score_before=? WHERE run_id=?", (score_before, run_id))
+
+
+def update_score_after(run_id: str, score_after: int) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE runs SET score_after=? WHERE run_id=?", (score_after, run_id))
+
+
 def finish_run(run_id: str, status: str, score_before: int | None, score_after: int | None, pr_url: str | None, error_msg: str | None = None) -> None:
     with _connect() as conn:
         conn.execute(
