@@ -1,11 +1,13 @@
 """
 Agent 1 — Vendor & Repository Detective.
 
-Two-layer dependency discovery:
+Three-layer dependency discovery:
   Layer 1 (deterministic): AST scanner finds every outbound HTTP call and env var reference.
-  Layer 2 (semantic):      Nemotron Ultra identifies the vendor, contract, criticality, and chaos scenarios.
+  Layer 2 (web intel):     Tavily searches for real-world reliability intel per vendor.
+  Layer 3 (semantic):      Nemotron Ultra identifies the vendor, contract, criticality, and chaos scenarios.
 
 The LLM enriches what the AST proves — it never invents a dependency.
+Tavily grounds criticality scoring in real vendor failure history.
 """
 
 import json
@@ -106,12 +108,17 @@ def run(repo: str, local_path: str | None = None) -> tuple[VendorSpec, dict[str,
     source_files = _collect_source_files(scan_root, local=True)
     logger.info("Source files collected (%d): %s", len(source_files), list(source_files.keys()))
 
-    # Layer 2: LLM semantic enrichment
+    # Layer 2: Tavily web intel — ground criticality in real vendor failure history
+    candidate_vendors = _extract_candidate_vendors(ast_findings)
+    tavily_intel = _fetch_tavily_intel(candidate_vendors)
+
+    # Layer 3: LLM semantic enrichment
     logger.info("Calling Ultra for vendor enrichment...")
     user_message = json.dumps({
         "repository": repo,
         "ast_findings": ast_findings,
         "source_files": source_files,
+        "tavily_intel": tavily_intel,
     }, indent=2)
 
     raw = nebius_client.ultra(system=_SYSTEM_PROMPT, user=user_message, temperature=0.1)
@@ -131,6 +138,64 @@ def run(repo: str, local_path: str | None = None) -> tuple[VendorSpec, dict[str,
     for v in spec.discovered_vendors:
         logger.info("  %s: criticality=%d, base_url_env=%s, app_route=%s, endpoints=%d", v.name, v.criticality_score, v.base_url_env, v.app_route, len(v.endpoints))
     return spec, source_files
+
+
+def _extract_candidate_vendors(ast_findings: dict) -> list[str]:
+    """Extract likely vendor names from env var names in AST findings."""
+    vendors = []
+    seen = set()
+    for var in ast_findings.get("env_vars", []):
+        name = var.upper()
+        for suffix in ("_BASE_URL", "_API_URL", "_URL", "_API_KEY", "_KEY", "_SECRET", "_TOKEN"):
+            if name.endswith(suffix):
+                candidate = name[: -len(suffix)].replace("_", " ").title().strip()
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    vendors.append(candidate)
+                break
+    return vendors
+
+
+def _fetch_tavily_intel(vendors: list[str]) -> dict[str, str]:
+    """
+    Search Tavily for real-world reliability intel per vendor.
+    Returns {vendor_name: summary} — empty dict if TAVILY_API_KEY not set or search fails.
+    """
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key or not vendors:
+        return {}
+
+    try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=api_key)
+    except Exception as e:
+        logger.warning("Tavily client init failed: %s", e)
+        return {}
+
+    intel: dict[str, str] = {}
+    for vendor in vendors:
+        try:
+            queries = [
+                f"{vendor} API failures incidents reliability SLA downtime",
+                f"{vendor} API timeout rate limit errors 503 502 common failures",
+            ]
+            snippets = []
+            for query in queries:
+                result = client.search(query, max_results=2, search_depth="basic")
+                snippets += [
+                    r.get("content", "")[:300]
+                    for r in result.get("results", [])
+                    if r.get("content")
+                ]
+            if snippets:
+                intel[vendor] = " | ".join(snippets)
+                logger.info("Tavily intel fetched for %s (%d snippets)", vendor, len(snippets))
+            else:
+                logger.info("Tavily: no results for %s", vendor)
+        except Exception as e:
+            logger.warning("Tavily search failed for %s: %s", vendor, e)
+
+    return intel
 
 
 def _clone_or_fetch(repo: str) -> str:

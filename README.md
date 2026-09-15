@@ -1,134 +1,88 @@
 # GhostVendor
 
-**GhostVendor haunts your dependencies. Six AI agents impersonate your APIs, inject real failures, diagnose what breaks, patch the code, and open a PR only after validation proves it survives.**
+**Vendor failures are invisible until production blows up.**
+
+Every Python web app depends on external vendors — Stripe for payments, SendGrid for email, Twilio for SMS. When those vendors return a 502, hang for 30 seconds, or send malformed JSON, most apps crash, hang, or silently corrupt state. The failure is discovered by a user, not a test.
+
+GhostVendor fixes this at the PR level. Open a pull request — GhostVendor automatically discovers your vendor dependencies (grounded in real-world reliability data from **[Tavily](https://tavily.com)**), impersonates each one with a chaos-injecting Evil Twin, scores how your app handles real failure modes, diagnoses what broke, patches the code, and opens a validated fix PR. No human intervention. No mocking. No guessing.
 
 Built with NVIDIA Nemotron models on [Nebius Token Factory](https://tokenfactory.nebius.com) for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com) — Coding & Agentic Engineering Track.
 
 ---
 
-## How It Works
+## Architecture
 
 ```
-GitHub Repo → DISCOVER → ATTACK → GUARD → VERIFY → DIAGNOSE → REMEDIATE → VALIDATE → DONE
+GitHub PR → DISCOVER → ATTACK → GUARD → VERIFY → DIAGNOSE → REMEDIATE → VALIDATE → PR opened
 ```
 
-Six specialized agents run an autonomous closed loop:
+A Python state machine orchestrates six specialized agents in a deterministic closed loop. Each agent owns a distinct responsibility and hands structured artifacts to the next. The LLM never decides what runs next — the orchestrator does. This is intentional: auditability, recoverability, and safety over autonomy.
 
 | # | Agent | Model | Responsibility |
 |---|---|---|---|
-| 1 | Vendor & Repository Detective | Nemotron Ultra | AST scan + LLM enrichment — discovers vendors, scores criticality, builds `vendor_spec` |
+| 1 | Vendor & Repository Detective | Nemotron Ultra | AST scan + Tavily web intel + LLM enrichment — discovers vendors, scores criticality, builds `vendor_spec` |
 | 2 | Adversarial Twin Generator | Nemotron Ultra | Generates Evil Twin — stateful FastAPI mock server with 5 chaos modes per vendor |
-| 3 | Context Guard | Nemotron Ultra | Security gate — AST inspection → Contree sandbox execution → LLM policy review (3 layers, in order) |
-| 4 | Resilience Verifier | Nemotron Ultra | Launches twins locally, injects chaos, runs demo app, scores resilience 0–100 |
+| 3 | Context Guard | Nemotron Nano | Security gate — AST inspection → Contree sandbox execution → LLM policy review (3 layers, in order) |
+| 4 | Resilience Verifier | Nemotron Ultra | Sense→Reason→Act loop: launches twins, injects chaos, observes real app behavior, scores 0–100 |
 | 5 | Runtime Debugger | Nemotron Ultra | Root-cause analysis on all failed scenarios, per vendor |
-| 6 | Patch Generator | DeepSeek-V4-Pro | Generates minimal patch, validates locally, opens PR with full context |
-
-A Python state machine orchestrates the loop with deterministic control flow, retry limits (max 3 remediation cycles), and structured artifact handoffs between agents.
+| 6 | Patch Generator | DeepSeek-V4-Pro | Generates minimal patch, validates locally against failed scenarios, opens PR only after proof it passes |
 
 ---
 
-## Pipeline States
+## Key Design Decisions
 
-```
-DISCOVER   Agent 1 — clone repo, AST-scan source, LLM-enrich vendor specs
-ATTACK     Agent 2 — generate one Evil Twin (FastAPI) per vendor
-GUARD      Agent 3 — 3-layer safety check: AST + Contree sandbox + LLM review
-VERIFY     Agent 4 — Sense→Reason→Act loop: chaos injection + resilience scoring
-DIAGNOSE   Agent 5 — root-cause analysis on failures
-REMEDIATE  Agent 6 — patch generation (retried up to 3×, with failure context fed back)
-VALIDATE   Agent 6 — apply patch to isolated temp dir, re-run failed scenarios
-DONE / FAILED
-```
+**Python orchestration, not LLM orchestration.** The state machine controls every transition. LLMs are specialized workers — they process structured input and return structured output. This makes the pipeline auditable (every state is logged), recoverable (retry at the failed stage, not from scratch), and safe (no LLM can decide to skip the security gate).
 
----
+**Sandbox before execution.** Agent 2 generates code. Agent 3 runs that code in an isolated Nebius Contree sandbox before it ever touches the local machine. A malicious or hallucinated twin that exfiltrates env vars or opens a reverse shell is caught in the cloud, not on the developer's machine.
 
-## PR Strategy — Human-in-the-Loop by Design
+**Validate before PR.** Agent 6 applies the patch to an isolated temp copy of the repo, spins up fresh Evil Twins, and re-runs every previously-failed scenario. The PR is opened only after all scenarios pass. The fix is proven, not proposed.
 
-GhostVendor never merges code automatically. Every output is a **draft PR** that requires human review before merge. This is an intentional architectural decision, not a limitation.
+**Findings PR fallback.** If patching fails after 3 retry cycles, GhostVendor opens a draft PR with a structured findings report — root cause, failed scenarios, attempted patches, exact validation failure. The pipeline always produces a human-readable artifact. No run ends silently.
 
-### Success path — validated patch PR
-
-When the patched app passes all previously-failed chaos scenarios:
-
-- A branch `ghostvendor/resilience/<timestamp>` is created on the target repo
-- Each patched file is committed with a descriptive message — including any caller/route patches generated as `extra_patches` alongside the primary fix
-- A **ready-for-review PR** (not draft) is opened with:
-  - Resilience score before and after patch (e.g. 23/100 → 81/100)
-  - Every failed scenario that was fixed, per vendor
-  - The patch strategy and root-cause summary for each vendor
-  - Number of retry cycles needed before validation passed
-  - Reference to the triggering PR (when `--pr` is provided)
-- The person who triggered the run is requested as a reviewer (when `--triggered-by` is provided)
-- A human reviews the diff, reads the context, and merges when satisfied
-
-The fix PR is not a draft because it has already been validated: the pipeline proved the patch survives all chaos scenarios before opening it. This is HITL (human-in-the-loop) at the merge gate.
-
-### Fallback path — findings-only draft PR
-
-When Agent 6 cannot produce a patch that passes validation after 3 retry cycles:
-
-- A branch `ghostvendor/findings/<timestamp>` is created
-- A `GHOSTVENDOR_FINDINGS.md` file is committed containing:
-  - Resilience score
-  - Every failed scenario per vendor
-  - Root-cause diagnoses from Agent 5
-  - All attempted patches with their descriptions
-  - The exact validation failure detail from the last attempt
-- A **draft PR** is opened with this file as its only change
-- A human can read the findings and apply the fix manually, or use them as context for a follow-up run
-
-This ensures the pipeline **always produces a human-readable artifact**, even when automated patching fails. No run ends silently.
+**Tavily-grounded criticality.** Vendor criticality scores are not just business-logic guesses. Tavily searches real-world reliability data — known outages, SLA breach reports, documented failure patterns — and feeds that intel to Agent 1 before the LLM assigns scores. A vendor with a documented history of cascading failures ranks higher within its category.
 
 ---
 
-## Validation Loop
+## Tavily — Real-World Vendor Intelligence
 
-After generating a patch, Agent 6 validates it locally before opening any PR:
+After the AST scan identifies candidate vendors from env var names, GhostVendor runs two targeted Tavily searches per vendor:
 
-1. The target repo is copied to an isolated temp directory
-2. Patched files are written into the temp copy
-3. `__pycache__` is purged so Python compiles from patched source, not stale bytecode
-4. `PYTHONPATH` is remapped from the original repo root to the temp dir (repo-agnostic — works with any source layout: `src/`, `lib/`, `.`, etc.)
-5. Evil Twins are launched fresh
-6. The patched app is started from the temp dir against the twins
-7. Only the previously-failed scenarios are re-run
-8. Pass = app responded without hanging AND the status code changed from its original failure (repo-agnostic — a 503 from graceful error handling counts as pass; only the same failure as before counts as fail); fail = feeds the failure detail back to Agent 6 for the next retry
+1. **Risk profile:** `{vendor} API failures incidents reliability SLA downtime`
+2. **Failure modes:** `{vendor} API timeout rate limit errors 503 502 common failures`
 
-If validation passes, the PR is opened. If it fails 3 times, the findings PR fallback fires.
+The results are injected into the Agent 1 prompt alongside AST findings and source files. The LLM uses this to calibrate criticality scores and inform the `expected_resilience` contract for each vendor endpoint — grounding the attack plan in real failure history, not generic patterns.
+
+If `TAVILY_API_KEY` is not set, this layer is silently skipped and the pipeline continues with AST-only enrichment.
 
 ---
 
 ## Evil Twin Chaos Modes
 
-Each vendor gets its own FastAPI mock that the demo app points at (via env var override). The verifier cycles through up to 5 scenarios per vendor:
+Each vendor gets its own FastAPI mock server that the demo app is pointed at via env var override. The Resilience Verifier runs a Sense→Reason→Act loop: observe baseline, plan attack, execute scenarios, decide whether to continue/escalate/stop after each result.
 
 | Mode | What it injects |
 |---|---|
-| `timeout` | 30 s async sleep — forces the app to hit its timeout (or hang forever) |
+| `timeout` | 30 s async sleep — forces the app to hit its timeout or hang forever |
 | `502_burst` | Returns HTTP 502 Bad Gateway |
 | `429_rate_limit` | Returns HTTP 429 Too Many Requests |
 | `malformed_json` | Returns HTTP 200 with a broken JSON body |
 | `empty_response` | Returns HTTP 200 with an empty body |
 
-The Ultra LLM observes each result and decides: **continue**, **escalate**, or **stop_early**. High-criticality vendors (score ≥ 80) require at least 4 scenarios before any early stop.
-
-Evil Twin processes run in isolated temp directories and are fully cleaned up after each use (including on restart after timeout scenarios).
+Evil Twin processes run in isolated temp directories and are fully cleaned up after each use, including on restart after timeout scenarios.
 
 ---
 
-## Context Guard — LLM Code in a Nebius Sandbox
+## Context Guard — Security Gate for LLM-Generated Code
 
-GhostVendor generates Evil Twin code with an LLM. Before that code ever runs on the local machine, Agent 3 puts it through a 3-layer security gate:
+Before any Evil Twin runs locally, Agent 3 puts it through a 3-layer security gate:
 
 | Layer | Mechanism | What it catches |
 |---|---|---|
-| 1 — AST Inspection | Python `ast` module static analysis | `exec`, `eval`, `__import__`, subprocess calls, socket opens, filesystem writes outside temp |
+| 1 — AST Inspection | Python `ast` module static analysis | `exec`, `eval`, `__import__`, subprocess calls, sensitive path references |
 | 2 — Contree Sandbox | Nebius-hosted secure execution environment | Actual runtime behavior — network calls, process spawning, anything AST missed |
-| 3 — LLM Policy Review | Nemotron Ultra policy judge | Intent analysis — flags code that is structurally safe but semantically suspicious |
+| 3 — LLM Policy Review | Nemotron Nano | Intent analysis — flags code that is structurally safe but semantically suspicious |
 
-All three layers must pass before the twin is allowed to run locally. If any layer rejects, the twin is discarded and the run halts.
-
-**Why this matters:** AI-generated code that runs arbitrary network servers is a real attack surface. A malicious or hallucinated twin could exfiltrate env vars, open reverse shells, or corrupt local state. The Nebius Contree sandbox executes the twin in an isolated cloud environment — nothing it does can reach the local machine. This is not a demo-mode safety check; it is a genuine defense-in-depth architecture for agentic systems that execute LLM output.
+All three layers must pass. Any HIGH or BLOCKED risk discards the twin and halts the run. The Nebius Contree sandbox executes the twin in an isolated cloud environment — nothing it does can reach the local machine.
 
 ---
 
@@ -139,25 +93,131 @@ vendor_score   = baseline_pts (20) + scenario_score (0–80)   [capped at 100]
 overall_score  = criticality-weighted average across all vendors
 ```
 
-The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only originally-failed modes and uses the actual count as the denominator so a fully-fixed vendor scores 100, not a fraction of 100. See [`docs/SCORING.md`](docs/SCORING.md) for the complete formula, outcome classification table, and worked examples.
+The VERIFY pass runs all 5 chaos modes. The rescore pass (after patching) runs only originally-failed modes and uses the actual failure count as the denominator — a vendor that failed 2 scenarios and fixed both scores 100, not a fraction. See [`docs/SCORING.md`](docs/SCORING.md) for the complete formula and outcome classification table.
 
 ---
 
-## Stability Features
+## Validation Loop
 
-| Feature | Detail |
-|---|---|
-| GitHub retry wrapper | All GitHub API calls retried up to 3× with 5 s delay on transient failures |
-| Port TIME_WAIT handling | `_pick_free_port()` falls back to OS ephemeral port if preferred port is in TIME_WAIT |
-| Port-free guard | `_wait_for_port_free()` raises immediately if a port won't clear — no silent 15 s startup waste |
-| Full-file ownership | Agent 6 returns the complete fixed file — model owns every line, ensuring model-added imports (e.g. `import time`) are preserved and no `NameError` at runtime |
-| Source cap | Agent 5 receives at most 8 source files × 4000 chars each to stay within context limits |
-| LLM wrapper stripping | All agents use shared `strip_llm_wrapper()` — handles missing `</think>` tags and absent fences without crashing |
-| Blocking sleep fix | `_fix_blocking_sleep()` post-processor rewrites any `time.sleep()` in generated Evil Twin code to `await asyncio.sleep()` — prevents event loop stalls that cause `/chaos DELETE` to hang during VALIDATE |
-| Health endpoint fix | `_fix_health_endpoint()` post-processor replaces generated `/health` route bodies with a safe minimal return — prevents `KeyError` from model-generated `log_request()` helpers |
-| Caller contract patching | When Agent 6 changes a function's return contract, it searches all source files for call sites and patches unguarded `result["key"]` access — prevents 500s in route handlers after the client is fixed |
-| Rescore twin reset | Each Evil Twin is launched fresh and immediately `reset()` before the rescore scenario loop — eliminates half-open connection corruption from VALIDATE's timeout scenarios bleeding into rescore |
-| Rescore baseline skip | Rescore does not re-test the baseline; VALIDATE already proved the patched app serves clean traffic. Re-testing risks poisoning the twin when the patched client's own timeout fires on a no-chaos request |
+After generating a patch, Agent 6 validates it locally before opening any PR:
+
+1. Target repo copied to an isolated temp directory
+2. Patched files written into the temp copy
+3. `__pycache__` purged — Python compiles from patched source, not stale bytecode
+4. `PYTHONPATH` remapped from original repo root to temp dir (repo-agnostic — works with any source layout: `src/`, `lib/`, `.`, etc.)
+5. Evil Twins launched fresh
+6. Patched app started from temp dir against the twins
+7. Only previously-failed scenarios re-run
+8. Pass = status code changed from original failure; fail = same failure feeds back to Agent 6 for the next retry
+
+If validation passes, PR is opened. If it fails 3 times, the findings PR fallback fires.
+
+---
+
+## PR Strategy
+
+### Success path — validated patch PR
+
+When the patched app passes all previously-failed chaos scenarios:
+
+- Branch `ghostvendor/resilience/<timestamp>` created on the target repo
+- Each patched file committed with a descriptive message
+- **Ready-for-review PR** (not draft) opened with resilience score before and after patch, every fixed scenario per vendor, patch strategy and root-cause summary, retry cycles needed, and reference to the triggering PR
+- Triggering author requested as reviewer
+- A human reviews the diff and merges when satisfied
+
+### Fallback path — findings-only draft PR
+
+When patching fails after 3 retry cycles:
+
+- Branch `ghostvendor/findings/<timestamp>` created
+- `GHOSTVENDOR_FINDINGS.md` committed with score, failed scenarios, root-cause diagnoses, attempted patches, and exact validation failure detail
+- Draft PR opened — human reads findings and applies the fix manually or triggers a follow-up run
+
+---
+
+## Evals
+
+The `evals/` directory contains a behavioral assertion suite that validates the pipeline end-to-end against [`NithinBR-AI/ghostvendor-eval-target`](https://github.com/NithinBR-AI/ghostvendor-eval-target) — a minimal Flask app with intentionally undefended vendor integrations (no timeouts, no retries, no fallbacks).
+
+| # | Assertion | What it proves |
+|---|---|---|
+| 1 | Agent 1 discovers at least one vendor | AST scan + LLM enrichment works on the eval target |
+| 2 | VERIFY score is below threshold (< 50/100) | The eval target is genuinely fragile — chaos modes expose real failures |
+| 3 | VALIDATE score improves after patch | The patch fixed what broke — not just noise |
+| 4 | A PR is opened with `ghostvendor` label | End-to-end pipeline completes and produces a GitHub artifact |
+| 5 | Patch diff is non-empty for each vendor | Agent 6 produced a real change, not a zero-diff pass |
+
+Evals run the full pipeline — no mocking, no stubs. Every assertion is a behavioral claim against real agent output.
+
+---
+
+## Setup & Test Build
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/NithinBR-AI/ghostvendor.git
+cd ghostvendor
+
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS/Linux
+
+pip install -e ".[dev]"
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in:
+
+```
+NEBIUS_API_KEY=...        # Nebius Token Factory API key
+GITHUB_TOKEN=...          # GitHub personal access token (repo + PR scope)
+TAVILY_API_KEY=...        # Tavily API key (optional — skipped gracefully if not set)
+```
+
+### 3. Run unit tests
+
+```bash
+.venv\Scripts\python.exe -m pytest tests/unit/ -v
+```
+
+### 4. Start the dashboard
+
+```bash
+.venv\Scripts\python.exe -m streamlit run dashboard/app.py
+```
+
+Open `http://localhost:8501` — the dashboard pre-seeds demo run history on first launch.
+
+### 5. Run the pipeline
+
+Against the canonical demo app:
+
+```bash
+.venv\Scripts\python.exe main.py NithinBR-AI/ghostvendor-demo-app --triggered-by NithinBR-AI
+```
+
+Against any public Flask/FastAPI repo:
+
+```bash
+.venv\Scripts\python.exe main.py owner/repo-name
+```
+
+With triggering PR context (mirrors what GitHub Actions sends):
+
+```bash
+.venv\Scripts\python.exe main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
+```
+
+### 6. GitHub Actions trigger (CI integration)
+
+Open a pull request on `NithinBR-AI/ghostvendor-demo-app` — the self-hosted runner picks it up automatically and the pipeline runs end-to-end. The dashboard reflects the live run in real time.
 
 ---
 
@@ -166,34 +226,46 @@ The VERIFY pass always runs all 5 chaos modes; the rescore pass runs only origin
 ```
 ghostvendor/
 ├── main.py                          # Entrypoint: python main.py owner/repo [--triggered-by LOGIN] [--pr NUMBER] [--branch BRANCH]
-├── Makefile                         # make run — canonical demo-app shortcut (see Setup)
+├── Makefile                         # make run — canonical demo-app shortcut
+├── pyproject.toml                   # Dependencies and package config
+├── .env.example                     # Required env vars template
+├── dashboard/
+│   ├── app.py                       # Streamlit dashboard — live pipeline visualization
+│   ├── viz.py                       # D3.js SVG pipeline graph (Voronoi core + hex nodes)
+│   ├── db.py                        # SQLite read/write API for pipeline runs and events
+│   └── schema.sql                   # DB schema — runs, run_events, vendor_results
 ├── docs/
-│   └── SCORING.md                   # Authoritative resilience score formula + outcome classification
+│   ├── SCORING.md                   # Authoritative resilience score formula + outcome classification
+│   └── architecture.html            # Interactive architecture diagram
+├── evals/                           # Behavioral eval suite — 5 assertions against ghostvendor-eval-target
+├── scripts/                         # Dev/debug scripts (not part of production pipeline)
 ├── src/
 │   ├── agents/
-│   │   ├── detective.py             # Agent 1 — vendor discovery + criticality scoring
+│   │   ├── detective.py             # Agent 1 — AST scan + Tavily intel + LLM vendor enrichment
 │   │   ├── twin_generator.py        # Agent 2 — Evil Twin FastAPI code generation
-│   │   ├── context_guard.py         # Agent 3 — AST + sandbox + LLM security gate
-│   │   ├── resilience_verifier.py   # Agent 4 — chaos injection + scoring loop
+│   │   ├── context_guard.py         # Agent 3 — AST + Contree sandbox + LLM security gate
+│   │   ├── resilience_verifier.py   # Agent 4 — Sense→Reason→Act chaos injection + scoring loop
 │   │   ├── runtime_debugger.py      # Agent 5 — root cause analysis per vendor
-│   │   └── patch_generator.py       # Agent 6 — patch generation + syntax validation
+│   │   └── patch_generator.py       # Agent 6 — patch generation + syntax validation + retry loop
 │   ├── pipeline/
 │   │   └── state_machine.py         # State transitions, retry logic, PR strategy, artifact store
 │   ├── tools/
-│   │   ├── evil_twin_runner.py      # Evil Twin subprocess lifecycle (start/chaos/restart/stop + temp dir cleanup)
+│   │   ├── evil_twin_runner.py      # Evil Twin subprocess lifecycle (start/chaos/restart/stop)
+│   │   ├── evil_twin_template.py    # Evil Twin harness assembly (chaos globals injection)
 │   │   ├── demo_app_runner.py       # Demo app subprocess lifecycle
 │   │   ├── repo_cloner.py           # Clone repo, detect startup command + port
 │   │   ├── ast_scanner.py           # Deterministic HTTP call + env var extraction
-│   │   └── github_client.py         # GitHub API — branch, commit, PR (draft + regular)
+│   │   ├── github_client.py         # GitHub API — branch, commit, PR (draft + regular)
+│   │   └── guardrails.py            # Pre-flight repo safety checks
 │   ├── utils/
-│   │   ├── nebius_client.py         # Nemotron Ultra/Super/Nano + DeepSeek-V4-Pro via Nebius Token Factory + strip_llm_wrapper
+│   │   ├── nebius_client.py         # Nemotron Ultra/Super/Nano + DeepSeek-V4-Pro via Token Factory
 │   │   └── logging_config.py        # Structured logging setup
 │   ├── models/
-│   │   ├── vendor_spec.py           # VendorSpec / VendorInfo schema
+│   │   ├── vendor_spec.py           # VendorSpec / Vendor schema
 │   │   ├── resilience_result.py     # ScenarioResult / VendorResult / ResilienceReport
 │   │   ├── diagnosis.py             # DiagnosisResult / DiagnosisReport schema
-│   │   ├── patch.py                 # PatchResult / PatchReport schema
-│   │   └── guard_decision.py        # GuardDecision schema
+│   │   ├── patch.py                 # PatchResult / PatchReport / ExtraPatch schema
+│   │   └── guard_decision.py        # GuardDecision / ASTFinding / RiskLevel schema
 │   └── prompts/
 │       ├── detective.txt            # Agent 1 system prompt
 │       ├── twin_generator.txt       # Agent 2 system prompt
@@ -201,73 +273,23 @@ ghostvendor/
 │       ├── resilience_verifier.txt  # Agent 4 system prompt
 │       ├── runtime_debugger.txt     # Agent 5 system prompt
 │       └── patch_generator.txt      # Agent 6 system prompt
-├── tests/
-├── pyproject.toml
-└── .env.example
-```
-
----
-
-## Setup
-
-```bash
-git clone https://github.com/nithinbr33/ghostvendor.git
-cd ghostvendor
-
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
-
-pip install -e ".[dev]"
-
-cp .env.example .env
-# Fill in NEBIUS_API_KEY, NEBIUS_PROJECT_ID, GITHUB_TOKEN
-```
-
-Run against the demo app (canonical dev command):
-
-```bash
-python main.py NithinBR-AI/ghostvendor-demo-app --triggered-by NithinBR-AI
-```
-
-Or via Make:
-
-```bash
-make run
-```
-
-Run against any public Flask/FastAPI repo:
-
-```bash
-python main.py owner/repo-name
-```
-
-With triggering PR context:
-
-```bash
-python main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
-```
-
-For local development (skips GitHub clone, uses local sibling directory):
-
-```bash
-GHOSTVENDOR_LOCAL_DEV=1 python main.py owner/repo-name
+└── tests/
+    ├── unit/                        # Unit tests — scoring, AST scanner, guard, evil twin template
+    └── integration/                 # Integration tests — state machine end-to-end
 ```
 
 ---
 
 ## Scope & Constraints
 
-GhostVendor is designed for a well-defined target class. Understanding the scope helps set correct expectations:
-
 | Constraint | Detail |
 |---|---|
 | **Python only** | AST scanning, PYTHONPATH remapping, and patch generation are Python-specific. Node.js, Go, and other runtimes are not currently supported. |
 | **Flask or FastAPI** | Startup detection looks for `app.run()` or `uvicorn.run()` calls to identify the server port. Other frameworks or custom entrypoints may need manual port hints. |
-| **Env-var-based vendor URLs** | Agent 1 finds vendors by detecting `os.environ.get(...)` calls near outbound HTTP calls. Vendors with hardcoded base URLs (e.g. `https://api.stripe.com` in source) are not detected. |
-| **HTTP vendors** | Chaos modes are HTTP-level (timeouts, 502s, 429s, malformed responses). Non-HTTP dependencies such as databases, message queues, or gRPC services are out of scope. |
+| **Env-var-based vendor URLs** | Agent 1 finds vendors by detecting `os.environ.get(...)` calls near outbound HTTP calls. Vendors with hardcoded base URLs in source are not detected. |
+| **HTTP vendors** | Chaos modes are HTTP-level. Non-HTTP dependencies such as databases, message queues, or gRPC services are out of scope. |
 
-These constraints reflect deliberate scoping for the hackathon submission, not fundamental architectural limits. Broadening to other languages or transports is a natural extension path.
+These constraints reflect deliberate scoping for the hackathon submission, not fundamental architectural limits.
 
 ---
 
@@ -275,51 +297,50 @@ These constraints reflect deliberate scoping for the hackathon submission, not f
 
 | Tier | Model | Used for |
 |---|---|---|
-| Ultra | `nvidia/Nemotron-3-Ultra-550b-a55b` | Vendor enrichment, LLM security review, attack planning, Sense→Reason→Act decisions, root-cause analysis, Evil Twin code generation |
+| Ultra | `nvidia/Nemotron-3-Ultra-550b-a55b` | Vendor enrichment, attack planning, Sense→Reason→Act decisions, root-cause analysis, Evil Twin code generation |
 | DeepSeek | `deepseek-ai/DeepSeek-V4-Pro` | Patch generation (Agent 6) — chosen for reliable structured JSON output at high token counts |
 | Super | `nvidia/nemotron-3-super-120b-a12b` | Fallback for Evil Twin generation |
-| Nano | `nvidia/Nemotron-3_5-Lightning` | Fast structured output (reserved for high-volume classification tasks) |
+| Nano | `nvidia/Nemotron-3_5-Lightning` | Fast structured output for Context Guard LLM policy review |
 
 Each tier has a fallback model. All calls go through `https://api.tokenfactory.nebius.com/v1/` (OpenAI-compatible).
 
 ---
 
-## What's Next
+## Stability Features
 
-### Stage 1 — Hackathon Submission (current / in progress)
-- 6-agent autonomous pipeline: discover → attack → guard → verify → diagnose → remediate → validate
-- Evil Twin chaos server with 5 modes per vendor, asyncio-safe harness
-- 3-layer Context Guard: AST + Nebius Contree sandbox + LLM policy review
-- Caller contract patching — extra_patches for route handlers when client return shape changes
-- Validated patch PR opened only after all originally-failed scenarios pass
-- Findings-only draft PR fallback when patching fails after 3 retry cycles
-- Repo-agnostic: any Python Flask/FastAPI app with env-var-based vendor URLs
-- Streamlit dashboard** — "GhostVendor activated" banner, live agent cards, before/after score, PR link
-- Guardrails — runtime constraints on agents: no writes outside temp dir, no network calls outside allowed vendor list, no shell execution in generated patches
-- Evals — `evals/` suite: Agent 6 produces non-empty patch, patch differs from original, rescore classifies outcomes correctly
+| Feature | Detail |
+|---|---|
+| GitHub retry wrapper | All GitHub API calls retried up to 3× with 5 s delay on transient failures |
+| Port TIME_WAIT handling | Falls back to OS ephemeral port if preferred port is in TIME_WAIT |
+| Full-file ownership | Agent 6 returns the complete fixed file — no partial diffs, no NameError from missing imports |
+| Zero-diff detection | Agent 6 rejects patches that are identical to the original source — forces a real change |
+| JSON repair | Agent 6 auto-repairs truncated or malformed JSON from the LLM before giving up |
+| LLM wrapper stripping | All agents use shared `strip_llm_wrapper()` — handles missing `</think>` tags and absent fences |
+| Caller contract patching | When Agent 6 changes a function's return shape, it patches all call sites — prevents 500s in route handlers after the client is fixed |
+| Editable install isolation | `.pth` files in the demo app's venv are disabled during validation so `PYTHONPATH` remapping to the patched temp dir takes effect |
+| Rescore twin reset | Each Evil Twin is launched fresh before the rescore loop — eliminates half-open connection corruption from VALIDATE's timeout scenarios |
+
+---
+
+## What's Next
 
 ### Stage 2 — Broader Language & Vendor Support
 - **Node.js / TypeScript** — AST scanner and startup detector for Express/Fastify apps
 - **Non-HTTP vendors** — chaos modes for Redis timeouts, SQS delivery failures, database connection drops
-- **Hardcoded URL detection** — detect vendors not using env vars via static analysis of string literals near HTTP calls
+- **Hardcoded URL detection** — detect vendors not using env vars via static analysis of string literals
 - **Multi-endpoint vendors** — attack each endpoint independently, not just the primary one
 
 ### Stage 3 — Production Deployment
-- **GitHub App** — registers webhooks on `pull_request.opened`, `push`, and `schedule`; validates signatures; filters triggers to only fire when vendor client files change (no wasted runs on CSS or docs changes); supports `/ghostvendor rerun` comment command on any PR
-- **Job queue** — SQS-backed async dispatch; pipeline runs as ECS Fargate tasks (Lambda is too short for a full run); queue absorbs burst traffic from busy repos without dropping events
-- **State persistence** — DynamoDB + S3 for run history: every pipeline run stored with score before/after, patches generated, PR opened, token cost, and duration; queryable by repo, vendor, and date range
-- **Secrets management** — AWS Secrets Manager per-tenant for Nebius API keys and GitHub tokens; no credentials in environment variables at the worker level
-- **CI integration** — GitHub Actions trigger: run GhostVendor automatically on every PR that touches vendor client files, with status check gating merge until the resilience score meets a configured threshold
+- **GitHub App** — registers webhooks on `pull_request.opened`, `push`, and `schedule`; filters to only fire when vendor client files change; supports `/ghostvendor rerun` comment command
+- **Job queue** — SQS-backed async dispatch; pipeline runs as ECS Fargate tasks
+- **State persistence** — DynamoDB + S3 for run history: every pipeline run stored with score before/after, patches generated, PR opened, token cost, and duration
+- **Secrets management** — AWS Secrets Manager per-tenant for Nebius API keys and GitHub tokens
 
 ### Stage 4 — Multi-Tenant & Observability
-- **Multi-repo support** — one GhostVendor deployment serves many repos across many orgs; per-repo config (vendor criticality overrides, excluded paths, minimum score threshold) stored in DynamoDB
-- **Run history dashboard** — every pipeline run surfaced with score trajectory, PR links, time-to-fix, and token cost; exportable for compliance or reporting
-- **Alerting** — if rescore drops below threshold on a previously-passing repo (e.g. after a dependency upgrade silently breaks timeout handling), page the on-call engineer before it hits production
-- **Cost tracking** — per-run Nebius token usage logged and aggregated by repo and org; budget alerts before a runaway retry loop burns the quota
-- **Feedback loop** — PR merge/close events feed back into the eval suite; merged patches promote to golden examples for future patch generation; rejected patches flagged for human review and used to improve Agent 6 prompts
-
-### Architecture Foundation Already in Place
-The pipeline's deterministic state machine, structured artifact handoffs, and repo-agnostic PYTHONPATH remapping were designed from day one to support these extensions without rewrites. Adding a new language means a new AST scanner and startup detector — the orchestration, scoring, and PR strategy are unchanged.
+- **Multi-repo support** — per-repo config (vendor criticality overrides, excluded paths, minimum score threshold)
+- **Run history dashboard** — score trajectory, PR links, time-to-fix, token cost; exportable for compliance
+- **Alerting** — page on-call if rescore drops below threshold after a dependency upgrade
+- **Feedback loop** — merged patches promote to golden examples for Agent 6 prompt improvement
 
 ---
 
