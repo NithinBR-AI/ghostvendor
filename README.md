@@ -244,7 +244,7 @@ ghostvendor/
 ├── docs/
 │   ├── SCORING.md                   # Authoritative resilience score formula + outcome classification
 │   └── architecture.html            # Interactive architecture diagram
-├── evals/                           # Behavioral eval suite — 5 assertions against ghostvendor-eval-target
+├── evals/                           # Behavioral eval suite — 4 assertions against ghostvendor-eval-target
 ├── scripts/                         # Dev/debug scripts (not part of production pipeline)
 ├── src/
 │   ├── agents/
