@@ -114,6 +114,7 @@ class StateMachine:
         triggering_pr: int | None = None,
         branch: str | None = None,
         pr_base_branch: str | None = None,
+        dry_run: bool = False,
     ):
         self.state = State.DISCOVER
         self.artifacts = ArtifactStore(repo=repo)
@@ -123,6 +124,7 @@ class StateMachine:
         self.triggering_pr = triggering_pr
         self.branch = branch
         self.pr_base_branch = pr_base_branch
+        self.dry_run = dry_run
         self.run_id = str(uuid.uuid4())
         self._state_start_ts: float = time.monotonic()
 
@@ -358,6 +360,10 @@ class StateMachine:
 Review the diagnoses above and apply the suggested fix strategies manually.
 """
 
+        if self.dry_run:
+            logger.info("dry_run=True: skipping findings PR creation")
+            return
+
         try:
             branch = _github_with_retry(lambda: github_client.create_branch(repo, branch))
             _github_with_retry(lambda: github_client.commit_file(
@@ -485,6 +491,14 @@ Review the diagnoses above and apply the suggested fix strategies manually.
             "Resilience score: %d/100 -> %d/100 after patch",
             self.artifacts.resilience_score_before, score_after,
         )
+
+        if self.dry_run:
+            logger.info(
+                "dry_run=True: skipping PR creation (score %d -> %d, patches validated)",
+                self.artifacts.resilience_score_before, score_after,
+            )
+            self.transition(State.DONE)
+            return
 
         try:
             repo = self.artifacts.repo

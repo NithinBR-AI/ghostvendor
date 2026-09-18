@@ -142,13 +142,12 @@ The `evals/` directory contains a behavioral assertion suite that validates the 
 
 | # | Assertion | What it proves |
 |---|---|---|
-| 1 | Agent 1 discovers at least one vendor | AST scan + LLM enrichment works on the eval target |
+| 1 | Agent 1 discovers at least one vendor | AST scan + LLM enrichment works on the eval target (Twilio + Mailgun — not seen in demo) |
 | 2 | VERIFY score is below threshold (< 50/100) | The eval target is genuinely fragile — chaos modes expose real failures |
-| 3 | VALIDATE score improves after patch | The patch fixed what broke — not just noise |
-| 4 | A PR is opened with `ghostvendor` label | End-to-end pipeline completes and produces a GitHub artifact |
-| 5 | Patch diff is non-empty for each vendor | Agent 6 produced a real change, not a zero-diff pass |
+| 3 | Patch `fixed_source` is non-empty for each vendor | Agent 6 produced a real change, not a zero-diff pass |
+| 4 | Rescore after patch exceeds score before | The patch fixed what broke — not just noise |
 
-Evals run the full pipeline — no mocking, no stubs. Every assertion is a behavioral claim against real agent output.
+Evals run in `dry_run` mode — the full pipeline executes (DISCOVER → ATTACK → GUARD → VERIFY → DIAGNOSE → REMEDIATE → VALIDATE) but skips opening a GitHub PR so runs are idempotent. Every assertion is a behavioral claim against real agent output, no mocking, no stubs.
 
 ---
 
