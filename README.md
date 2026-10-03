@@ -431,7 +431,7 @@ This is the only part of the pipeline that is not reproducible with any commodit
 ### Stage 3 — Production Deployment
 - **GitHub App** — registers webhooks on `pull_request.opened`, `push`, and `schedule`; filters to only fire when vendor client files change; supports `/ghostvendor rerun` comment command
 - **Job queue** — SQS-backed async dispatch; pipeline runs as ECS Fargate tasks
-- **State persistence** — DynamoDB + S3 for run history: every pipeline run stored with score before/after, patches generated, PR opened, token cost, and duration
+- **State persistence** — currently Supabase (Postgres) shared between GitHub Actions and Streamlit Cloud; production path is DynamoDB + S3 for token cost tracking, patch artifacts, and multi-tenant isolation
 - **Secrets management** — AWS Secrets Manager per-tenant for Nebius API keys and GitHub tokens
 
 ### Stage 4 — Multi-Tenant & Observability
