@@ -10,12 +10,16 @@ import datetime
 import threading
 import sys
 import os
+
+# Ensure repo root is on path so `from dashboard import db` resolves on Streamlit Cloud
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+sys.path.insert(0, os.path.join(_repo_root, "src"))
+
 import streamlit as st
 from dashboard import db
 from dashboard import viz
-
-# Allow running from repo root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 _TEST_RUN_REPO = "NithinBR-AI/ghostvendor-demo-app"
 _TEST_RUN_PR   = 51
