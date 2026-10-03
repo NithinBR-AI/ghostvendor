@@ -8,6 +8,8 @@ GhostVendor fixes this at the PR level. Open a pull request — GhostVendor auto
 
 Built with NVIDIA Nemotron models on [Nebius Token Factory](https://tokenfactory.nebius.com) for the [Nebius × NVIDIA Global AI Hackathon](https://nebiusglobalaihackathon.devpost.com) — Coding & Agentic Engineering Track.
 
+**[▶ Live Dashboard](https://ghostvendor-jmntcf6qp6ubkv6ejkak9w.streamlit.app/)** — watch a pipeline run in real time or trigger a test run against the demo PR.
+
 ---
 
 ## Architecture

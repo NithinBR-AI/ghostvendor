@@ -88,6 +88,10 @@ st.markdown(
     "::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}"
     "hr{border-color:#334155!important;margin:12px 0}"
     "p,li{color:#94a3b8}"
+    ".run-btn-wrap{margin-top:-52px!important;float:right;margin-right:24px;position:relative;z-index:100}"
+    ".run-btn-wrap button{height:34px!important;padding:0 18px!important;font-size:12px!important;"
+    "font-family:'JetBrains Mono',monospace!important;font-weight:600!important;"
+    "letter-spacing:0.04em!important;border-radius:6px!important}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -159,20 +163,8 @@ def _fmt_ts(iso):
 
 
 # ── Header (rendered once, outside tabs) ─────────────────────────────────────
-def _header(is_running: bool = False):
-    btn_html = (
-        "<span style='padding:6px 16px;border-radius:6px;background:#334155;"
-        "border:1px solid #475569;font-size:11px;font-weight:600;color:#64748b;"
-        "font-family:JetBrains Mono,monospace;letter-spacing:0.06em;cursor:not-allowed'>"
-        "⏳ Running…</span>"
-        if is_running else
-        "<a href='?run=1' style='text-decoration:none'>"
-        "<span style='padding:6px 16px;border-radius:6px;background:#0ea5e9;"
-        "border:1px solid #38bdf8;font-size:11px;font-weight:600;color:#fff;"
-        "font-family:JetBrains Mono,monospace;letter-spacing:0.06em;cursor:pointer'>"
-        "▶ Run Pipeline</span></a>"
-    )
-    st.markdown(f"""
+def _header():
+    st.markdown("""
 <div style="display:flex;align-items:center;justify-content:space-between;
     padding:14px 28px 12px;background:#1e293b;border-bottom:1px solid #334155;margin-top:60px;">
   <div style="display:flex;align-items:center;gap:12px;">
@@ -182,16 +174,12 @@ def _header(is_running: bool = False):
       <div style="font-size:11px;color:#64748b;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin-top:1px">autonomous resilience engineer</div>
     </div>
   </div>
-  <div style="display:flex;align-items:center;gap:16px;">
-    <div style="text-align:right">
-      <div style="font-size:10px;font-weight:700;color:#f59e0b;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;margin-bottom:3px">⚡ TEST RUN</div>
-      <div style="font-size:11px;color:#94a3b8;font-family:'Inter',sans-serif;line-height:1.5">
-        Runs against <span style="color:#e2e8f0;font-family:'JetBrains Mono',monospace">ghostvendor-demo-app · PR #51</span><br>
-        In production triggers automatically on any PR open.
-      </div>
+  <div style="text-align:right;padding-right:200px">
+    <div style="font-size:10px;font-weight:700;color:#f59e0b;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;margin-bottom:3px">⚡ TEST RUN</div>
+    <div style="font-size:11px;color:#94a3b8;font-family:'Inter',sans-serif;line-height:1.5">
+      Runs against <span style="color:#e2e8f0;font-family:'JetBrains Mono',monospace">ghostvendor-demo-app · PR #51</span><br>
+      In production triggers automatically on any PR open.
     </div>
-    <span style="width:1px;height:36px;background:#334155;display:inline-block;flex-shrink:0;align-self:center"></span>
-    <div style="align-self:center">{btn_html}</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -466,13 +454,16 @@ def main():
     active = db.get_active_run()
     is_running = bool(active and active.get("status") == "running")
 
-    # Trigger pipeline when ?run=1 query param is present
-    if st.query_params.get("run") == "1" and not is_running:
-        _launch_test_run()
-        st.query_params.clear()
-        st.rerun()
+    _header()
 
-    _header(is_running=is_running)
+    st.markdown("<div class='run-btn-wrap'>", unsafe_allow_html=True)
+    if is_running:
+        st.button("⏳ Running…", disabled=True, key="run_btn")
+    else:
+        if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
+            _launch_test_run()
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["  Live Run  ", "  Run History  ", "  About  "])
     with tab1:
