@@ -235,7 +235,9 @@ def _header(is_running: bool):
             "<div style='font-size:10px;font-weight:700;color:#f59e0b;font-family:JetBrains Mono,monospace;letter-spacing:0.1em;margin-bottom:2px'>⚡ TEST RUN</div>"
             "<div style='font-size:10px;color:#94a3b8;line-height:1.4'>"
             "Runs against <span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app · PR #51</span> &nbsp;·&nbsp; "
-            "In production triggers automatically on any PR open."
+            "In production triggers automatically on any PR open. &nbsp;·&nbsp; "
+            "<a href='https://github.com/NithinBR-AI/ghostvendor/actions' target='_blank' "
+            "style='color:#38bdf8;text-decoration:none;font-family:JetBrains Mono,monospace'>View live run on GitHub Actions ↗</a>"
             "</div></div>",
             unsafe_allow_html=True,
         )
@@ -325,6 +327,26 @@ def _tab_live():
             sa = last_run.get("score_after") if show_scores else None
             html = viz.render(state, sb, sa, dim=True, height=600)
             st.components.v1.html(html, height=600, scrolling=False)
+
+            pr_url = last_run.get("pr_url")
+            if pr_url and status == "done":
+                st.markdown(
+                    f"<div style='text-align:center;padding:10px;'>"
+                    f"<a href='{pr_url}' target='_blank' style='color:#22c55e;font-family:JetBrains Mono,monospace;"
+                    f"font-size:12px;text-decoration:none;background:#0f2b1a;padding:6px 16px;"
+                    f"border:1px solid #22c55e;border-radius:4px;'>✅ Fix PR opened — view on GitHub ↗</a>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            elif status == "findings_only" and pr_url:
+                st.markdown(
+                    f"<div style='text-align:center;padding:10px;'>"
+                    f"<a href='{pr_url}' target='_blank' style='color:#f59e0b;font-family:JetBrains Mono,monospace;"
+                    f"font-size:12px;text-decoration:none;background:#1f1a0a;padding:6px 16px;"
+                    f"border:1px solid #f59e0b;border-radius:4px;'>📋 Findings PR opened — view on GitHub ↗</a>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
         else:
             st.markdown(
