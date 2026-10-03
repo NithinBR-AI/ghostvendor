@@ -70,7 +70,10 @@ def _trigger_github_actions():
             },
         },
     )
-    return resp.status_code == 204
+    if resp.status_code != 204:
+        st.error(f"Failed to trigger pipeline: HTTP {resp.status_code} — {resp.text}")
+        return False
+    return True
 
 
 def _run_pipeline():
