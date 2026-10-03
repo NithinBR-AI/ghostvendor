@@ -69,7 +69,7 @@ st.markdown(
     "section[data-testid='stSidebar']{background:#1e293b;border-right:1px solid #334155}"
     "[data-testid='stTabs'] [data-baseweb='tab-list']{"
     "background:#1e293b;border-bottom:1px solid #334155;gap:0;padding:0 24px}"
-    "[data-testid='stTabs']{margin-top:60px!important}"
+    "[data-testid='stTabs']{margin-top:0!important}"
     "[data-testid='stTabs'] [data-baseweb='tab']{"
     "background:transparent!important;border:none!important;"
     "box-shadow:none!important;"
@@ -88,10 +88,6 @@ st.markdown(
     "::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}"
     "hr{border-color:#334155!important;margin:12px 0}"
     "p,li{color:#94a3b8}"
-    "#run-btn-anchor{position:fixed;top:72px;right:24px;z-index:1000;width:160px}"
-    "#run-btn-anchor button{height:34px!important;padding:0 14px!important;"
-    "font-size:12px!important;font-family:'JetBrains Mono',monospace!important;"
-    "font-weight:600!important;letter-spacing:0.04em!important;border-radius:6px!important}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -163,8 +159,20 @@ def _fmt_ts(iso):
 
 
 # ── Header (rendered once, outside tabs) ─────────────────────────────────────
-def _header():
-    st.markdown("""
+def _header(is_running: bool = False):
+    btn_html = (
+        "<span style='padding:6px 16px;border-radius:6px;background:#334155;"
+        "border:1px solid #475569;font-size:11px;font-weight:600;color:#64748b;"
+        "font-family:JetBrains Mono,monospace;letter-spacing:0.06em;cursor:not-allowed'>"
+        "⏳ Running…</span>"
+        if is_running else
+        "<a href='?run=1' style='text-decoration:none'>"
+        "<span style='padding:6px 16px;border-radius:6px;background:#0ea5e9;"
+        "border:1px solid #38bdf8;font-size:11px;font-weight:600;color:#fff;"
+        "font-family:JetBrains Mono,monospace;letter-spacing:0.06em;cursor:pointer'>"
+        "▶ Run Pipeline</span></a>"
+    )
+    st.markdown(f"""
 <div style="display:flex;align-items:center;justify-content:space-between;
     padding:14px 28px 12px;background:#1e293b;border-bottom:1px solid #334155;margin-top:60px;">
   <div style="display:flex;align-items:center;gap:12px;">
@@ -174,16 +182,16 @@ def _header():
       <div style="font-size:11px;color:#64748b;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin-top:1px">autonomous resilience engineer</div>
     </div>
   </div>
-  <div style="display:flex;align-items:center;gap:8px;">
-    <span style="padding:3px 10px;border-radius:20px;background:rgba(139,92,246,0.12);
-        border:1px solid rgba(139,92,246,0.3);font-size:11px;font-weight:600;color:#a78bfa;
-        font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">Nemotron Ultra</span>
-    <span style="padding:3px 10px;border-radius:20px;background:rgba(245,158,11,0.1);
-        border:1px solid rgba(245,158,11,0.3);font-size:11px;font-weight:600;color:#fbbf24;
-        font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">Nemotron Nano</span>
-    <span style="padding:3px 10px;border-radius:20px;background:rgba(34,197,94,0.08);
-        border:1px solid rgba(34,197,94,0.25);font-size:11px;font-weight:600;color:#4ade80;
-        font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">DeepSeek Pro</span>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div style="text-align:right">
+      <div style="font-size:10px;font-weight:700;color:#f59e0b;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;margin-bottom:3px">⚡ TEST RUN</div>
+      <div style="font-size:11px;color:#94a3b8;font-family:'Inter',sans-serif;line-height:1.5">
+        Runs against <span style="color:#e2e8f0;font-family:'JetBrains Mono',monospace">ghostvendor-demo-app · PR #51</span><br>
+        In production triggers automatically on any PR open.
+      </div>
+    </div>
+    <span style="width:1px;height:36px;background:#334155;display:inline-block;flex-shrink:0;align-self:center"></span>
+    <div style="align-self:center">{btn_html}</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -455,19 +463,16 @@ def _tab_about():
 def main():
     db.init_db()
 
-    _header()
-
-    # Button fixed into header bar via CSS #run-btn-anchor
     active = db.get_active_run()
-    is_running = active and active.get("status") == "running"
-    st.markdown("<div id='run-btn-anchor'>", unsafe_allow_html=True)
-    if is_running:
-        st.button("⏳ Running…", disabled=True, key="run_btn")
-    else:
-        if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
-            _launch_test_run()
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    is_running = bool(active and active.get("status") == "running")
+
+    # Trigger pipeline when ?run=1 query param is present
+    if st.query_params.get("run") == "1" and not is_running:
+        _launch_test_run()
+        st.query_params.clear()
+        st.rerun()
+
+    _header(is_running=is_running)
 
     tab1, tab2, tab3 = st.tabs(["  Live Run  ", "  Run History  ", "  About  "])
     with tab1:

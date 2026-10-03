@@ -383,30 +383,7 @@ if(scoreAfter!==null && (STATE.VALIDATE||{{}}).status==="complete"){{
     .attr("font-family","Inter,sans-serif").text(scoreBefore+" → "+scoreAfter);
 }}
 
-// ── BRANDING ──
-svg.append("text").attr("x",20).attr("y",28)
-  .attr("font-size","15").attr("font-weight","900").attr("fill","#f1f5f9").attr("opacity","0.92")
-  .attr("font-family","Inter,sans-serif").attr("letter-spacing","-0.02em")
-  .text("👻 GhostVendor");
-
-var badges=[
-  {{label:"Nemotron Ultra",col:"#a78bfa",bg:"rgba(139,92,246,0.12)",bc:"rgba(139,92,246,0.35)"}},
-  {{label:"Nemotron Nano", col:"#fbbf24",bg:"rgba(245,158,11,0.10)",bc:"rgba(245,158,11,0.35)"}},
-  {{label:"DeepSeek Pro",  col:"#4ade80",bg:"rgba(34,197,94,0.08)", bc:"rgba(34,197,94,0.30)"}},
-];
-var bx=W-20;
-badges.slice().reverse().forEach(function(b){{
-  var tw=b.label.length*7.2+20;
-  bx-=tw;
-  svg.append("rect").attr("x",bx).attr("y",8).attr("width",tw).attr("height",24)
-    .attr("rx",12).attr("fill",b.bg).attr("stroke",b.bc).attr("stroke-width","1");
-  svg.append("text").attr("x",bx+tw/2).attr("y",24).attr("text-anchor","middle")
-    .attr("font-size","11").attr("font-weight","700").attr("fill",b.col)
-    .attr("font-family","JetBrains Mono,monospace").text(b.label);
-  bx-=8;
-}});
-
-// Watermark — anchored to bottom of visible area (H - 60 clears any clipping)
+// Watermark bottom-left
 var wmY = H - 18;
 svg.append("text").attr("x",20).attr("y",wmY)
   .attr("font-size","14").attr("font-weight","900").attr("fill","#cbd5e1").attr("opacity","0.88")
@@ -416,6 +393,24 @@ svg.append("text").attr("x",20).attr("y",wmY+16)
   .attr("font-size","10").attr("fill","#94a3b8").attr("opacity","0.82")
   .attr("font-family","JetBrains Mono,monospace").attr("letter-spacing","0.06em")
   .text("Autonomous Resilience Engineer");
+
+// Model pills bottom-right, inline with watermark
+var badges=[
+  {{label:"Nemotron Ultra",col:"#a78bfa",bg:"rgba(139,92,246,0.12)",bc:"rgba(139,92,246,0.35)"}},
+  {{label:"Nemotron Nano", col:"#fbbf24",bg:"rgba(245,158,11,0.10)",bc:"rgba(245,158,11,0.35)"}},
+  {{label:"DeepSeek Pro",  col:"#4ade80",bg:"rgba(34,197,94,0.08)", bc:"rgba(34,197,94,0.30)"}},
+];
+var bx=W-20;
+badges.slice().reverse().forEach(function(b){{
+  var tw=b.label.length*7.2+20;
+  bx-=tw;
+  svg.append("rect").attr("x",bx).attr("y",wmY-14).attr("width",tw).attr("height",22)
+    .attr("rx",11).attr("fill",b.bg).attr("stroke",b.bc).attr("stroke-width","1");
+  svg.append("text").attr("x",bx+tw/2).attr("y",wmY).attr("text-anchor","middle")
+    .attr("font-size","10").attr("font-weight","700").attr("fill",b.col)
+    .attr("font-family","JetBrains Mono,monospace").text(b.label);
+  bx-=8;
+}});
 
 }})();
 </script>
