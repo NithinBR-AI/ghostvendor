@@ -256,6 +256,10 @@ def _tab_live():
     run = db.get_active_run()
     is_active = run is not None and run.get("status") == "running"
 
+    if not is_active and st.session_state.get("run_triggered"):
+        st.session_state["run_triggered"] = False
+        st.rerun()
+
     if is_active:
         events = db.get_run_events(run["run_id"])
         state = _events_to_state(events)
