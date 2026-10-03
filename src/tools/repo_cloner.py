@@ -81,7 +81,7 @@ def _find_or_clone(repo: str, repo_name: str) -> str:
     logger.info("Cloning %s → %s", repo, dest)
 
     result = subprocess.run(
-        ["git", "clone", "--depth", "1", clone_url, str(dest)],
+        ["git", "clone", clone_url, str(dest)],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
