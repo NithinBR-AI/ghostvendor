@@ -181,11 +181,22 @@ Copy-Item .env.example .env
 Open `.env` and fill in:
 
 ```
+# Required for local pipeline runs
 NEBIUS_API_KEY=...          # Nebius Token Factory API key — all LLM calls go through this
-GITHUB_TOKEN=...            # GitHub personal access token (repo + pull_request scopes)
+GITHUB_TOKEN=...            # GitHub PAT (repo + workflow scopes)
 NEBIUS_PROJECT_ID=...       # Nebius project ID — required for Contree sandbox execution
 TAVILY_API_KEY=...          # Tavily API key — optional, skipped gracefully if not set
-GHOSTVENDOR_LOCAL_DEV=1     # Set to 1 for local runs; omit in GitHub Actions (uses workflow env)
+
+# LOCAL DEV flag — set to 1 on your machine only
+# Skips git clone (uses local repo copy) and forces SQLite instead of Supabase
+# Do NOT set this in GitHub Actions or Streamlit Cloud
+GHOSTVENDOR_LOCAL_DEV=1
+
+# Supabase — only needed locally if you want to run migrate_to_supabase.py
+# or test the dashboard against the shared cloud DB
+# In production: set these in GitHub Actions secrets and Streamlit Cloud secrets
+SUPABASE_URL=https://your-ref.supabase.co
+SUPABASE_ANON_KEY=your_anon_key
 ```
 
 ### 3. Run unit tests
@@ -222,11 +233,63 @@ With triggering PR context (mirrors what GitHub Actions sends):
 .venv\Scripts\python.exe main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
 ```
 
-### 6. GitHub Actions trigger (demo only)
+### 6. Live dashboard run (GitHub Actions + Supabase)
 
-`NithinBR-AI/ghostvendor-demo-app` has a CI workflow (`.github/workflows/ci.yml`) that runs on pull requests. A self-hosted runner registered on the author's machine picks up those jobs and calls `main.py` with the PR context — opening a PR on the demo-app triggers a live GhostVendor run during the demo.
+The hosted dashboard at [ghostvendor.streamlit.app](https://ghostvendor-jmntcf6qp6ubkv6ejkak9w.streamlit.app/) supports triggering a real pipeline run from the browser and watching it update in real time. This is wired up as follows:
 
-This is not reproducible by a reviewer without registering their own self-hosted runner. Steps 1–5 above are fully self-contained and reproducible independently.
+**How it works:**
+
+```
+Browser button → GitHub Actions workflow_dispatch API
+                       ↓
+              Ubuntu runner clones repo, installs deps, runs main.py
+                       ↓
+              Pipeline writes events to Supabase (shared Postgres)
+                       ↓
+              Streamlit Cloud polls Supabase every 4 s → live neural network updates
+```
+
+**Components:**
+
+| Component | Role |
+|---|---|
+| `.github/workflows/run_pipeline.yml` | `workflow_dispatch` workflow — accepts `repo`, `pr`, `branch` inputs; runs `main.py` on a GitHub-hosted Ubuntu runner |
+| `dashboard/app.py` | Detects environment via `GHOSTVENDOR_LOCAL_DEV`; on cloud calls GitHub API to dispatch the workflow |
+| `dashboard/db.py` | Dual-backend persistence — SQLite when `GHOSTVENDOR_LOCAL_DEV=1`, Supabase when `SUPABASE_URL` is set and `GHOSTVENDOR_LOCAL_DEV` is not |
+| Supabase | Hosted Postgres shared between the GitHub Actions runner (writes) and Streamlit Cloud (reads); tables: `runs`, `run_events`, `vendor_results` |
+
+**Secrets required** (set in both GitHub Actions and Streamlit Cloud):
+
+| Secret | Where to set | Value |
+|---|---|---|
+| `SUPABASE_URL` | GitHub Actions → Settings → Secrets → Actions; Streamlit Cloud → App settings → Secrets | Supabase project URL |
+| `SUPABASE_ANON_KEY` | Same | Supabase anon/public key |
+| `GH_PAT` | GitHub Actions only | GitHub PAT with `repo` + `workflow` scopes (named `GH_PAT` — GitHub blocks secrets starting with `GITHUB_`) |
+| `NEBIUS_API_KEY`, `NEBIUS_PROJECT_ID`, `TAVILY_API_KEY` | GitHub Actions only | Same values as local `.env` |
+
+**Environment variable behaviour:**
+
+| Variable | Local dev | GitHub Actions | Streamlit Cloud |
+|---|---|---|---|
+| `GHOSTVENDOR_LOCAL_DEV` | `1` — skips git clone, uses SQLite | Not set | Not set |
+| `SUPABASE_URL` | Set (for migration script) | Set via secret | Set via secret |
+| `SUPABASE_ANON_KEY` | Set (for migration script) | Set via secret | Set via secret |
+
+**Supabase setup (one-time):**
+
+1. Create the 3 tables by running `dashboard/supabase_schema.sql` in the Supabase SQL editor
+2. Apply RLS policies so the anon key can read/write:
+   ```sql
+   CREATE POLICY "anon full access" ON runs FOR ALL TO anon USING (true) WITH CHECK (true);
+   CREATE POLICY "anon full access" ON run_events FOR ALL TO anon USING (true) WITH CHECK (true);
+   CREATE POLICY "anon full access" ON vendor_results FOR ALL TO anon USING (true) WITH CHECK (true);
+   ```
+3. Migrate existing SQLite run history to Supabase:
+   ```bash
+   .venv\Scripts\python.exe dashboard/migrate_to_supabase.py
+   ```
+
+**Local run is completely unaffected** — `GHOSTVENDOR_LOCAL_DEV=1` in `.env` forces SQLite regardless of whether `SUPABASE_URL` is also present.
 
 ---
 
@@ -237,12 +300,17 @@ ghostvendor/
 ├── main.py                          # Entrypoint: python main.py owner/repo [--triggered-by LOGIN] [--pr NUMBER] [--branch BRANCH]
 ├── Makefile                         # make run — canonical demo-app shortcut
 ├── pyproject.toml                   # Dependencies and package config
-├── .env.example                     # Required env vars template
+├── .env.example                     # Required env vars template (local vs cloud distinction documented)
+├── .github/
+│   └── workflows/
+│       └── run_pipeline.yml         # workflow_dispatch — triggered by dashboard button, runs pipeline on GitHub-hosted runner
 ├── dashboard/
-│   ├── app.py                       # Streamlit dashboard — live pipeline visualization
+│   ├── app.py                       # Streamlit dashboard — live pipeline visualization, GitHub Actions trigger
 │   ├── viz.py                       # D3.js SVG pipeline graph (Voronoi core + hex nodes)
-│   ├── db.py                        # SQLite read/write API for pipeline runs and events
-│   └── schema.sql                   # DB schema — runs, run_events, vendor_results
+│   ├── db.py                        # Dual-backend persistence — SQLite (local) or Supabase (cloud)
+│   ├── schema.sql                   # SQLite schema — runs, run_events, vendor_results
+│   ├── supabase_schema.sql          # Supabase (Postgres) schema — run once in Supabase SQL editor
+│   └── migrate_to_supabase.py       # One-shot migration: copies SQLite run history to Supabase
 ├── docs/
 │   ├── SCORING.md                   # Authoritative resilience score formula + outcome classification
 │   └── architecture.html            # Interactive architecture diagram

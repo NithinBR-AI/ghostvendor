@@ -26,6 +26,8 @@ jobs:
       NEBIUS_PROJECT_ID: ${{ secrets.NEBIUS_PROJECT_ID }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
     steps:
       - name: Checkout
