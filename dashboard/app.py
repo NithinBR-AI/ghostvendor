@@ -87,6 +87,32 @@ def _run_pipeline():
         if success:
             st.toast("Pipeline triggered on GitHub Actions!", icon="✅")
 
+
+def _cancel_pipeline(run_id: str | None = None):
+    """Cancel the active GitHub Actions workflow run and mark it cancelled in DB."""
+    import requests
+    token = os.environ.get("GITHUB_TOKEN", "")
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
+
+    # Get the latest in-progress workflow run
+    list_url = f"https://api.github.com/repos/{_GHOSTVENDOR_REPO}/actions/workflows/{_WORKFLOW_FILE}/runs?status=in_progress&per_page=1"
+    resp = requests.get(list_url, headers=headers)
+    if resp.status_code != 200 or not resp.json().get("workflow_runs"):
+        st.toast("No active workflow run found to cancel.", icon="⚠️")
+        return
+
+    wf_run_id = resp.json()["workflow_runs"][0]["id"]
+    cancel_url = f"https://api.github.com/repos/{_GHOSTVENDOR_REPO}/actions/runs/{wf_run_id}/cancel"
+    requests.post(cancel_url, headers=headers)
+
+    # Mark cancelled in DB
+    if run_id:
+        db.finish_run(run_id, "cancelled", None, None, None, "Cancelled by user")
+    st.session_state["run_triggered"] = False
+    st.session_state["run_seen"] = False
+    st.toast("Pipeline cancelled.", icon="🛑")
+    st.rerun()
+
 st.set_page_config(
     page_title="GhostVendor",
     page_icon="👻",
@@ -244,11 +270,18 @@ def _header(is_running: bool):
     with col_btn:
         triggered = st.session_state.get("run_triggered", False)
         if is_running or triggered:
-            st.button("⏳ Running…", disabled=True, key="run_btn")
+            c1, c2 = st.columns([3, 2])
+            with c1:
+                st.button("⏳ Running…", disabled=True, key="run_btn")
+            with c2:
+                if st.button("✕ Cancel", key="cancel_btn", type="secondary"):
+                    active = db.get_active_run()
+                    _cancel_pipeline(active["run_id"] if active else None)
         else:
             if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
                 st.session_state["run_triggered"] = True
                 st.session_state["run_triggered_at"] = datetime.datetime.utcnow().isoformat()
+                st.session_state["session_run_completed"] = False
                 _run_pipeline()
                 st.rerun()
 
@@ -268,6 +301,7 @@ def _tab_live():
     if not is_active and st.session_state.get("run_triggered") and st.session_state.get("run_seen"):
         st.session_state["run_triggered"] = False
         st.session_state["run_seen"] = False
+        st.session_state["session_run_completed"] = True
         st.rerun()
 
     if is_active:
@@ -329,24 +363,25 @@ def _tab_live():
             st.components.v1.html(html, height=600, scrolling=False)
 
             pr_url = last_run.get("pr_url")
-            if pr_url and status == "done":
-                st.markdown(
-                    f"<div style='text-align:center;padding:10px;'>"
-                    f"<a href='{pr_url}' target='_blank' style='color:#22c55e;font-family:JetBrains Mono,monospace;"
-                    f"font-size:12px;text-decoration:none;background:#0f2b1a;padding:6px 16px;"
-                    f"border:1px solid #22c55e;border-radius:4px;'>✅ Fix PR opened — view on GitHub ↗</a>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            elif status == "findings_only" and pr_url:
-                st.markdown(
-                    f"<div style='text-align:center;padding:10px;'>"
-                    f"<a href='{pr_url}' target='_blank' style='color:#f59e0b;font-family:JetBrains Mono,monospace;"
-                    f"font-size:12px;text-decoration:none;background:#1f1a0a;padding:6px 16px;"
-                    f"border:1px solid #f59e0b;border-radius:4px;'>📋 Findings PR opened — view on GitHub ↗</a>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+            if st.session_state.get("session_run_completed") and pr_url:
+                if status == "done":
+                    st.markdown(
+                        f"<div style='text-align:center;padding:10px;'>"
+                        f"<a href='{pr_url}' target='_blank' style='color:#22c55e;font-family:JetBrains Mono,monospace;"
+                        f"font-size:12px;text-decoration:none;background:#0f2b1a;padding:6px 16px;"
+                        f"border:1px solid #22c55e;border-radius:4px;'>✅ Fix PR opened — view on GitHub ↗</a>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif status == "findings_only":
+                    st.markdown(
+                        f"<div style='text-align:center;padding:10px;'>"
+                        f"<a href='{pr_url}' target='_blank' style='color:#f59e0b;font-family:JetBrains Mono,monospace;"
+                        f"font-size:12px;text-decoration:none;background:#1f1a0a;padding:6px 16px;"
+                        f"border:1px solid #f59e0b;border-radius:4px;'>📋 Findings PR opened — view on GitHub ↗</a>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
 
         else:
             st.markdown(

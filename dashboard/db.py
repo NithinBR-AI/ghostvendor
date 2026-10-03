@@ -135,14 +135,20 @@ def save_vendor_results(run_id: str, vendors: list[dict]) -> None:
 
 # ── Read API ──────────────────────────────────────────────────────────────────
 
+_STALE_RUN_MINUTES = 30
+
+
 def get_active_run() -> dict | None:
+    import datetime
+    cutoff = (datetime.datetime.utcnow() - datetime.timedelta(minutes=_STALE_RUN_MINUTES)).isoformat()
     if _use_supabase():
-        res = _supabase().table("runs").select("*").eq("status", "running").order("started_at", desc=True).limit(1).execute()
+        res = _supabase().table("runs").select("*").eq("status", "running").gt("started_at", cutoff).order("started_at", desc=True).limit(1).execute()
         return res.data[0] if res.data else None
     else:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT * FROM runs WHERE status='running' ORDER BY started_at DESC LIMIT 1"
+                "SELECT * FROM runs WHERE status='running' AND started_at > ? ORDER BY started_at DESC LIMIT 1",
+                (cutoff,)
             ).fetchone()
             return dict(row) if row else None
 
