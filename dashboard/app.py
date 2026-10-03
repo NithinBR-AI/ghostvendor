@@ -7,9 +7,41 @@ Run from ghostvendor/ root: streamlit run dashboard/app.py
 import time
 import json
 import datetime
+import threading
+import sys
+import os
 import streamlit as st
 from dashboard import db
 from dashboard import viz
+
+# Allow running from repo root
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+_TEST_RUN_REPO = "NithinBR-AI/ghostvendor-demo-app"
+_TEST_RUN_PR   = 51
+_TEST_RUN_BRANCH = "feature/add-vendor-integrations"
+
+
+def _launch_test_run():
+    """Run the pipeline in a background thread against the fixed test PR."""
+    def _run():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            from pipeline.state_machine import StateMachine
+            sm = StateMachine(
+                repo=_TEST_RUN_REPO,
+                triggered_by="ghostvendor-demo",
+                triggering_pr=_TEST_RUN_PR,
+                branch=_TEST_RUN_BRANCH,
+            )
+            sm.run()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error("Test run failed: %s", e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 st.set_page_config(
     page_title="GhostVendor",
@@ -224,6 +256,29 @@ def _tab_live():
                 "Open a PR on the demo app to trigger the pipeline</div></div>",
                 unsafe_allow_html=True,
             )
+
+        # ── Test Run button (always visible when no active run) ───────────────
+        active = db.get_active_run()
+        if not active or active.get("status") != "running":
+            st.markdown(
+                "<div style='margin:0 auto;max-width:640px;padding:20px 28px;'>"
+                "<div style='padding:16px 20px;background:#1e293b;border:1px solid #334155;"
+                "border-radius:10px;margin-bottom:14px'>"
+                "<div style='font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:0.1em;"
+                "font-family:JetBrains Mono,monospace;margin-bottom:6px'>⚡ TEST RUN</div>"
+                "<div style='font-size:12px;color:#94a3b8;line-height:1.6'>"
+                "Runs the full GhostVendor pipeline against a fixed existing PR on "
+                "<span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app</span>. "
+                "In production this triggers automatically when any PR is opened. "
+                "The pipeline takes 8–10 minutes — watch the visualization above update in real time."
+                "</div></div></div>",
+                unsafe_allow_html=True,
+            )
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("▶  Run Pipeline Against Demo PR #51", use_container_width=True, type="primary"):
+                    _launch_test_run()
+                    st.rerun()
 
 
 # ── Tab 2: Run History ────────────────────────────────────────────────────────
