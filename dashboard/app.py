@@ -88,6 +88,10 @@ st.markdown(
     "::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}"
     "hr{border-color:#334155!important;margin:12px 0}"
     "p,li{color:#94a3b8}"
+    "#run-btn-anchor{position:fixed;top:72px;right:24px;z-index:1000;width:160px}"
+    "#run-btn-anchor button{height:34px!important;padding:0 14px!important;"
+    "font-size:12px!important;font-family:'JetBrains Mono',monospace!important;"
+    "font-weight:600!important;letter-spacing:0.04em!important;border-radius:6px!important}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -451,29 +455,19 @@ def _tab_about():
 def main():
     db.init_db()
 
-    # Header + Run button on same row
-    col_hdr, col_btn = st.columns([5, 1])
-    with col_hdr:
-        _header()
-    with col_btn:
-        active = db.get_active_run()
-        is_running = active and active.get("status") == "running"
-        st.markdown(
-            "<div style='margin-top:68px;font-size:10px;color:#64748b;font-family:JetBrains Mono,monospace;"
-            "letter-spacing:0.08em;margin-bottom:4px'>⚡ TEST RUN</div>"
-            "<div style='font-size:10px;color:#94a3b8;line-height:1.5;margin-bottom:8px'>"
-            "Runs the full pipeline against a fixed existing PR on "
-            "<span style='color:#e2e8f0'>ghostvendor-demo-app</span>. "
-            "In production triggers automatically on any PR open. Takes 8–10 min."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if is_running:
-            st.button("⏳ Running…", disabled=True, use_container_width=True)
-        else:
-            if st.button("▶ Run Pipeline", use_container_width=True, type="primary"):
-                _launch_test_run()
-                st.rerun()
+    _header()
+
+    # Button fixed into header bar via CSS #run-btn-anchor
+    active = db.get_active_run()
+    is_running = active and active.get("status") == "running"
+    st.markdown("<div id='run-btn-anchor'>", unsafe_allow_html=True)
+    if is_running:
+        st.button("⏳ Running…", disabled=True, key="run_btn")
+    else:
+        if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
+            _launch_test_run()
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["  Live Run  ", "  Run History  ", "  About  "])
     with tab1:
