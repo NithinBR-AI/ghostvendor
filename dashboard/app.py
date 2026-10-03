@@ -261,28 +261,6 @@ def _tab_live():
                 unsafe_allow_html=True,
             )
 
-        # ── Test Run button (always visible when no active run) ───────────────
-        active = db.get_active_run()
-        if not active or active.get("status") != "running":
-            st.markdown(
-                "<div style='margin:0 auto;max-width:640px;padding:20px 28px;'>"
-                "<div style='padding:16px 20px;background:#1e293b;border:1px solid #334155;"
-                "border-radius:10px;margin-bottom:14px'>"
-                "<div style='font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:0.1em;"
-                "font-family:JetBrains Mono,monospace;margin-bottom:6px'>⚡ TEST RUN</div>"
-                "<div style='font-size:12px;color:#94a3b8;line-height:1.6'>"
-                "Runs the full GhostVendor pipeline against a fixed existing PR on "
-                "<span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app</span>. "
-                "In production this triggers automatically when any PR is opened. "
-                "The pipeline takes 8–10 minutes — watch the visualization above update in real time."
-                "</div></div></div>",
-                unsafe_allow_html=True,
-            )
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button("▶  Run Pipeline Against Demo PR #51", use_container_width=True, type="primary"):
-                    _launch_test_run()
-                    st.rerun()
 
 
 # ── Tab 2: Run History ────────────────────────────────────────────────────────
@@ -472,6 +450,29 @@ def _tab_about():
 
 def main():
     db.init_db()
+
+    # Sidebar: Test Run (always visible, never overlaps main content)
+    with st.sidebar:
+        st.markdown(
+            "<div style='padding:12px 0 8px'>"
+            "<div style='font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:0.1em;"
+            "font-family:JetBrains Mono,monospace;margin-bottom:6px'>⚡ TEST RUN</div>"
+            "<div style='font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:12px'>"
+            "Runs the full pipeline against a fixed existing PR on "
+            "<span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app</span>. "
+            "In production this triggers automatically on any PR open. "
+            "Takes 8–10 min — watch the graph update live."
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+        active = db.get_active_run()
+        if active and active.get("status") == "running":
+            st.button("⏳  Pipeline Running…", disabled=True, use_container_width=True)
+        else:
+            if st.button("▶  Run Pipeline Against Demo PR #51", use_container_width=True, type="primary"):
+                _launch_test_run()
+                st.rerun()
+
     tab1, tab2, tab3 = st.tabs(["  Live Run  ", "  Run History  ", "  About  "])
     with tab1:
         _tab_live()
