@@ -7,3 +7,4 @@ uvicorn>=0.30.0
 streamlit>=1.35.0
 requests>=2.31.0
 tavily-python>=0.3.0
+contree-sdk==0.3.6
