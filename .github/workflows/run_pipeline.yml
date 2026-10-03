@@ -1,0 +1,47 @@
+name: Run GhostVendor Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Target repo (owner/name)"
+        required: false
+        default: "NithinBR-AI/ghostvendor-demo-app"
+      pr:
+        description: "Triggering PR number"
+        required: false
+        default: "51"
+      branch:
+        description: "Branch to scan"
+        required: false
+        default: "feature/add-vendor-integrations"
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
+      NEBIUS_PROJECT_ID: ${{ secrets.NEBIUS_PROJECT_ID }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: |
+          python main.py "${{ github.event.inputs.repo }}" \
+            --pr "${{ github.event.inputs.pr }}" \
+            --branch "${{ github.event.inputs.branch }}" \
+            --triggered-by "ghostvendor-dashboard"

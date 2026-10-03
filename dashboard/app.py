@@ -24,10 +24,12 @@ from dashboard import viz
 _TEST_RUN_REPO = "NithinBR-AI/ghostvendor-demo-app"
 _TEST_RUN_PR   = 51
 _TEST_RUN_BRANCH = "feature/add-vendor-integrations"
+_GHOSTVENDOR_REPO = "NithinBR-AI/ghostvendor"
+_WORKFLOW_FILE = "run_pipeline.yml"
 
 
 def _launch_test_run():
-    """Run the pipeline in a background thread against the fixed test PR."""
+    """Run the pipeline in a background thread against the fixed test PR (local only)."""
     def _run():
         try:
             from dotenv import load_dotenv
@@ -47,6 +49,37 @@ def _launch_test_run():
     t = threading.Thread(target=_run, daemon=True)
     t.start()
 
+
+def _trigger_github_actions():
+    """Trigger the pipeline via GitHub Actions workflow_dispatch (cloud)."""
+    import requests
+    token = os.environ.get("GITHUB_TOKEN", "")
+    url = f"https://api.github.com/repos/{_GHOSTVENDOR_REPO}/actions/workflows/{_WORKFLOW_FILE}/dispatches"
+    resp = requests.post(
+        url,
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "ref": "main",
+            "inputs": {
+                "repo": _TEST_RUN_REPO,
+                "pr": str(_TEST_RUN_PR),
+                "branch": _TEST_RUN_BRANCH,
+            },
+        },
+    )
+    return resp.status_code == 204
+
+
+def _run_pipeline():
+    """Entry point for the Run Pipeline button — local thread or GitHub Actions."""
+    if os.environ.get("GHOSTVENDOR_LOCAL_DEV"):
+        _launch_test_run()
+    else:
+        _trigger_github_actions()
+
 st.set_page_config(
     page_title="GhostVendor",
     page_icon="👻",
@@ -62,10 +95,11 @@ st.markdown(
     "html,body{font-family:'Inter',sans-serif!important;background:#0f172a!important}"
     "[data-testid='stApp']{background:#0f172a!important}"
     "[data-testid='stAppViewContainer']{background:#0f172a!important}"
-    "[data-testid='stHeader']{background:#0f172a!important;border-bottom:none!important}"
-    ".stAppToolbar{top:0!important;background:transparent!important;z-index:10}"
-    "[data-testid='stMainBlockContainer']{padding:0!important;max-width:100%!important}"
-    ".block-container{padding:0!important;max-width:100%!important}"
+    "[data-testid='stHeader']{display:none!important}"
+    ".stAppToolbar{display:none!important}"
+    "[data-testid='stMainBlockContainer']{padding:0!important;max-width:100%!important;margin:0!important}"
+    ".block-container{padding:0!important;max-width:100%!important;margin:0!important}"
+    "[data-testid='stMainBlockContainer'] > div:first-child > div:first-child{padding:0!important}"
     "section[data-testid='stSidebar']{background:#1e293b;border-right:1px solid #334155}"
     "[data-testid='stTabs'] [data-baseweb='tab-list']{"
     "background:#1e293b;border-bottom:1px solid #334155;gap:0;padding:0 24px}"
@@ -88,10 +122,23 @@ st.markdown(
     "::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}"
     "hr{border-color:#334155!important;margin:12px 0}"
     "p,li{color:#94a3b8}"
-    ".run-btn-wrap{margin-top:-52px!important;float:right;margin-right:24px;position:relative;z-index:100}"
-    ".run-btn-wrap button{height:34px!important;padding:0 18px!important;font-size:12px!important;"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock']{"
+    "background:#1e293b!important;border-bottom:1px solid #334155;padding:10px 0!important;"
+    "margin:0!important;gap:0!important;overflow:hidden}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] > div{"
+    "padding:0 12px!important;min-width:0}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] > div:last-child{"
+    "padding-right:0!important;padding-left:0!important}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] > div:last-child .stVerticalBlock{"
+    "display:flex!important;justify-content:flex-end!important;align-items:center!important}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] > div:last-child .stElementContainer{"
+    "width:auto!important;margin-left:auto!important}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] > div:last-child button{"
+    "margin-right:0!important}"
+    "[data-testid='stMainBlockContainer'] > div:first-child [data-testid='stHorizontalBlock'] button{"
+    "height:34px!important;padding:0 18px!important;font-size:12px!important;"
     "font-family:'JetBrains Mono',monospace!important;font-weight:600!important;"
-    "letter-spacing:0.04em!important;border-radius:6px!important}"
+    "letter-spacing:0.04em!important;border-radius:6px!important;white-space:nowrap}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -163,26 +210,37 @@ def _fmt_ts(iso):
 
 
 # ── Header (rendered once, outside tabs) ─────────────────────────────────────
-def _header():
-    st.markdown("""
-<div style="display:flex;align-items:center;justify-content:space-between;
-    padding:14px 28px 12px;background:#1e293b;border-bottom:1px solid #334155;margin-top:60px;">
-  <div style="display:flex;align-items:center;gap:12px;">
-    <span style="font-size:22px;line-height:1">👻</span>
-    <div>
-      <div style="font-size:17px;font-weight:900;color:#f1f5f9;letter-spacing:-0.02em;line-height:1.1">GhostVendor</div>
-      <div style="font-size:11px;color:#64748b;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin-top:1px">autonomous resilience engineer</div>
-    </div>
-  </div>
-  <div style="text-align:right;padding-right:200px">
-    <div style="font-size:10px;font-weight:700;color:#f59e0b;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;margin-bottom:3px">⚡ TEST RUN</div>
-    <div style="font-size:11px;color:#94a3b8;font-family:'Inter',sans-serif;line-height:1.5">
-      Runs against <span style="color:#e2e8f0;font-family:'JetBrains Mono',monospace">ghostvendor-demo-app · PR #51</span><br>
-      In production triggers automatically on any PR open.
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+def _header(is_running: bool):
+    col_brand, col_mid, col_btn = st.columns([3, 4, 3])
+    with col_brand:
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:10px;padding-top:4px'>"
+            "<span style='font-size:22px;line-height:1'>👻</span>"
+            "<div>"
+            "<div style='font-size:17px;font-weight:900;color:#f1f5f9;letter-spacing:-0.02em;line-height:1.1'>GhostVendor</div>"
+            "<div style='font-size:11px;color:#64748b;font-family:JetBrains Mono,monospace;letter-spacing:0.05em;margin-top:1px'>autonomous resilience engineer</div>"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+    with col_mid:
+        st.markdown(
+            "<div style='text-align:center;padding-top:2px'>"
+            "<div style='font-size:10px;font-weight:700;color:#f59e0b;font-family:JetBrains Mono,monospace;letter-spacing:0.1em;margin-bottom:2px'>⚡ TEST RUN</div>"
+            "<div style='font-size:10px;color:#94a3b8;line-height:1.4'>"
+            "Runs against <span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app · PR #51</span> &nbsp;·&nbsp; "
+            "In production triggers automatically on any PR open."
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
+    with col_btn:
+        triggered = st.session_state.get("run_triggered", False)
+        if is_running or triggered:
+            st.button("⏳ Running…", disabled=True, key="run_btn")
+        else:
+            if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
+                st.session_state["run_triggered"] = True
+                _run_pipeline()
+                st.rerun()
 
 
 # ── Tab 1: Live Run (fragment = only this reruns on polling) ──────────────────
@@ -454,16 +512,7 @@ def main():
     active = db.get_active_run()
     is_running = bool(active and active.get("status") == "running")
 
-    _header()
-
-    st.markdown("<div class='run-btn-wrap'>", unsafe_allow_html=True)
-    if is_running:
-        st.button("⏳ Running…", disabled=True, key="run_btn")
-    else:
-        if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
-            _launch_test_run()
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    _header(is_running)
 
     tab1, tab2, tab3 = st.tabs(["  Live Run  ", "  Run History  ", "  About  "])
     with tab1:
