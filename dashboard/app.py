@@ -246,6 +246,7 @@ def _header(is_running: bool):
         else:
             if st.button("▶ Run Pipeline", type="primary", key="run_btn"):
                 st.session_state["run_triggered"] = True
+                st.session_state["run_triggered_at"] = datetime.datetime.utcnow().isoformat()
                 _run_pipeline()
                 st.rerun()
 
@@ -256,8 +257,15 @@ def _tab_live():
     run = db.get_active_run()
     is_active = run is not None and run.get("status") == "running"
 
-    if not is_active and st.session_state.get("run_triggered"):
+    if is_active:
+        triggered_at = st.session_state.get("run_triggered_at", "")
+        run_started = run.get("started_at", "")
+        if triggered_at and run_started and run_started >= triggered_at:
+            st.session_state["run_seen"] = True
+
+    if not is_active and st.session_state.get("run_triggered") and st.session_state.get("run_seen"):
         st.session_state["run_triggered"] = False
+        st.session_state["run_seen"] = False
         st.rerun()
 
     if is_active:
