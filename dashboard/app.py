@@ -79,9 +79,13 @@ def _trigger_github_actions():
 def _run_pipeline():
     """Entry point for the Run Pipeline button — local thread or GitHub Actions."""
     if os.environ.get("GHOSTVENDOR_LOCAL_DEV"):
+        st.toast("Running locally…", icon="🖥️")
         _launch_test_run()
     else:
-        _trigger_github_actions()
+        st.toast("Triggering GitHub Actions…", icon="⚡")
+        success = _trigger_github_actions()
+        if success:
+            st.toast("Pipeline triggered on GitHub Actions!", icon="✅")
 
 st.set_page_config(
     page_title="GhostVendor",
