@@ -41,6 +41,8 @@ A Python state machine orchestrates six specialized agents in a deterministic cl
 
 **Findings PR fallback.** If patching fails after 3 retry cycles, GhostVendor opens a draft PR with a structured findings report — root cause, failed scenarios, attempted patches, exact validation failure. The pipeline always produces a human-readable artifact. No run ends silently.
 
+**Clean exit when already resilient.** If all vendors score above the passing threshold before any patching is needed, GhostVendor exits cleanly with no PR opened. A passing app produces no noise.
+
 **Tavily-grounded criticality.** Vendor criticality scores are not just business-logic guesses. Tavily searches real-world reliability data — known outages, SLA breach reports, documented failure patterns — and feeds that intel to Agent 1 before the LLM assigns scores. A vendor with a documented history of cascading failures ranks higher within its category.
 
 ---
@@ -233,21 +235,38 @@ With triggering PR context (mirrors what GitHub Actions sends):
 .venv\Scripts\python.exe main.py owner/repo-name --triggered-by github-login --pr 42 --branch feature/my-branch
 ```
 
-### 6. Live dashboard run (GitHub Actions + Supabase)
+### 6. Trigger paths
 
-The hosted dashboard at [ghostvendor.streamlit.app](https://ghostvendor-jmntcf6qp6ubkv6ejkak9w.streamlit.app/) supports triggering a real pipeline run from the browser and watching it update in real time. This is wired up as follows:
+GhostVendor has two real trigger paths into the same pipeline:
+
+| Path | Trigger | Runner | Use case |
+|---|---|---|---|
+| **Dashboard** | Browser button → `workflow_dispatch` API | GitHub-hosted Ubuntu | Demo and on-demand runs — judges and reviewers trigger a run and watch it live |
+| **Automatic** | PR opened on target repo → `pull_request` webhook | Self-hosted runner | Real usage — any PR on a registered repo runs GhostVendor automatically, no human trigger |
+
+The dashboard path exists because judges need a way to trigger a run without opening a real PR. The self-hosted path exists because production use requires zero friction — open a PR, get a resilience report. Both paths run the same `main.py` pipeline end-to-end.
+
+**Future:** As adoption grows, the self-hosted runner moves to a job queue (SQS + ECS Fargate) with a GitHub App registering webhooks across multiple repos — see Stage 3 in What's Next.
+
+---
+
+### 6a. Live dashboard run (GitHub Actions + Supabase)
+
+The hosted dashboard at [ghostvendor.streamlit.app](https://ghostvendor-jmntcf6qp6ubkv6ejkak9w.streamlit.app/) supports triggering a real pipeline run from the browser and watching it update in real time. This is the demo path — designed for judges and reviewers to see the pipeline execute against a known PR.
 
 **How it works:**
 
 ```
 Browser button → GitHub Actions workflow_dispatch API
                        ↓
-              Ubuntu runner clones repo, installs deps, runs main.py
+              GitHub-hosted Ubuntu runner clones repo, installs deps, runs main.py
                        ↓
               Pipeline writes events to Supabase (shared Postgres)
                        ↓
               Streamlit Cloud polls Supabase every 4 s → live neural network updates
 ```
+
+A typical run completes in 8–12 minutes and consumes approximately $0.40 in Nebius token costs.
 
 **Components:**
 
@@ -257,6 +276,47 @@ Browser button → GitHub Actions workflow_dispatch API
 | `dashboard/app.py` | Detects environment via `GHOSTVENDOR_LOCAL_DEV`; on cloud calls GitHub API to dispatch the workflow |
 | `dashboard/db.py` | Dual-backend persistence — SQLite when `GHOSTVENDOR_LOCAL_DEV=1`, Supabase when `SUPABASE_URL` is set and `GHOSTVENDOR_LOCAL_DEV` is not |
 | Supabase | Hosted Postgres shared between the GitHub Actions runner (writes) and Streamlit Cloud (reads); tables: `runs`, `run_events`, `vendor_results` |
+
+### 6b. Automatic PR trigger (self-hosted runner)
+
+For real usage, GhostVendor fires automatically whenever a PR is opened or reopened on the target repo — no dashboard, no manual trigger.
+
+**How it works:**
+
+```
+PR opened on ghostvendor-demo-app
+                       ↓
+              ghostvendor-demo-app/.github/workflows/ghostvendor.yml fires
+                       ↓
+              Self-hosted runner picks up the job
+                       ↓
+              Runs main.py with PR number, branch, and actor from the event
+                       ↓
+              Pipeline runs end-to-end → fix MR opened on the target repo
+```
+
+**Workflow file** (`ghostvendor-demo-app/.github/workflows/ghostvendor.yml`):
+
+```yaml
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  ghostvendor:
+    runs-on: self-hosted
+    steps:
+      - name: Run GhostVendor pipeline
+        shell: powershell
+        run: |
+          cd C:\...\ghostvendor
+          .\.venv\Scripts\python.exe main.py NithinBR-AI/ghostvendor-demo-app `
+            --triggered-by ${{ github.actor }} `
+            --pr ${{ github.event.pull_request.number }} `
+            --branch ${{ github.head_ref }}
+```
+
+The self-hosted runner has all dependencies pre-installed and env vars pre-configured — no secrets need to be pushed to GitHub for the pipeline's Nebius and Tavily calls.
 
 **Secrets required** (set in both GitHub Actions and Streamlit Cloud):
 
