@@ -22,7 +22,7 @@ from dashboard import db
 from dashboard import viz
 
 _TEST_RUN_REPO = "NithinBR-AI/ghostvendor-demo-app"
-_TEST_RUN_PR   = 51
+_TEST_RUN_PR   = 61
 _TEST_RUN_BRANCH = "feature/add-vendor-integrations"
 _GHOSTVENDOR_REPO = "NithinBR-AI/ghostvendor"
 _WORKFLOW_FILE = "run_pipeline.yml"
@@ -260,7 +260,7 @@ def _header(is_running: bool):
             "<div style='text-align:center;padding-top:2px'>"
             "<div style='font-size:10px;font-weight:700;color:#f59e0b;font-family:JetBrains Mono,monospace;letter-spacing:0.1em;margin-bottom:2px'>⚡ TEST RUN</div>"
             "<div style='font-size:10px;color:#94a3b8;line-height:1.4'>"
-            "Runs against <span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app · PR #51</span> &nbsp;·&nbsp; "
+            "Runs against <span style='color:#e2e8f0;font-family:JetBrains Mono,monospace'>ghostvendor-demo-app · PR #61</span> &nbsp;·&nbsp; "
             "In production triggers automatically on any PR open. &nbsp;·&nbsp; "
             "<a href='https://github.com/NithinBR-AI/ghostvendor/actions' target='_blank' "
             "style='color:#38bdf8;text-decoration:none;font-family:JetBrains Mono,monospace'>View live run on GitHub Actions ↗</a>"

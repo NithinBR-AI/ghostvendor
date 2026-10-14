@@ -10,7 +10,7 @@ on:
       pr:
         description: "Triggering PR number"
         required: false
-        default: "51"
+        default: "61"
       branch:
         description: "Branch to scan"
         required: false
