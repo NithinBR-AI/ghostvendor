@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS runs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     run_id      TEXT UNIQUE NOT NULL,
     repo        TEXT NOT NULL,
     pr_number   INTEGER,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 
 CREATE TABLE IF NOT EXISTS run_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     run_id      TEXT NOT NULL,
     ts          TEXT NOT NULL,
     state       TEXT NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS run_events (
 );
 
 CREATE TABLE IF NOT EXISTS vendor_results (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              SERIAL PRIMARY KEY,
     run_id          TEXT NOT NULL,
     vendor_name     TEXT NOT NULL,
     criticality_score INTEGER,
