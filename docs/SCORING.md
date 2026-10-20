@@ -46,12 +46,13 @@ When a scenario is re-run after patching, the outcome is classified relative to 
 | Original result | Rescore result | Outcome |
 |---|---|---|
 | timeout / exception (hung) | any HTTP response | **PASS** — app no longer hangs |
-| HTTP failure (e.g. 503) | same HTTP status | **FAIL** — unchanged |
+| HTTP 5xx failure | same HTTP status | **FAIL** — unchanged |
+| HTTP 5xx failure | different 5xx | **DEGRADED** — changed but still server error |
+| HTTP 5xx failure | 4xx | **PASS** — genuine improvement (graceful error, not crash) |
 | HTTP failure | status < 400 | **PASS** — fixed |
-| HTTP failure | 400–499 | **DEGRADED** — graceful error handling |
-| HTTP failure | 500–599 (different) | **DEGRADED** — changed, but still server error |
+| No original to compare | 4xx | **DEGRADED** — error handling present but not clean |
 
-A 503 that was the original failure becomes DEGRADED (not FAIL) if the patched app now returns a different 5xx — it changed, which means the patch had an effect.
+A 5xx→different-5xx scores DEGRADED (not PASS) because a different crash is not a proven fix. A 5xx→4xx scores PASS because the app now returns a structured client-facing error instead of crashing — that is the goal of graceful degradation.
 
 ## Overall Pipeline Score
 

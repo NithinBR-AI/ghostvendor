@@ -784,18 +784,24 @@ def _rescore_patched(
                     ) as scenario_app:
                         status, _, _ = scenario_app.post(vendor.app_route, payload, timeout=_REQUEST_TIMEOUT)
                     twin.clear_chaos()
-                    # Pass if original was a timeout/exception (any HTTP response is better),
-                    # or if status changed from the original failure status.
+                    # Pass criterion:
+                    # - Original was timeout/exception → any HTTP response is better → PASS
+                    # - Status unchanged from original failure → FAIL (patch didn't help)
+                    # - 5xx → different 5xx → DEGRADED (different crash, not a real fix)
+                    # - 5xx → 4xx, or anything → 2xx → PASS (genuine improvement)
                     if orig and orig.exception:
                         outcome = ScenarioOutcome.PASS
                     elif orig and orig.http_status and status == orig.http_status:
                         outcome = ScenarioOutcome.FAIL
+                    elif orig and orig.http_status >= 500 and 500 <= status < 600 and status != orig.http_status:
+                        outcome = ScenarioOutcome.DEGRADED
                     elif status < 400:
+                        outcome = ScenarioOutcome.PASS
+                    elif orig and orig.http_status and status < orig.http_status:
                         outcome = ScenarioOutcome.PASS
                     elif status < 500:
                         outcome = ScenarioOutcome.DEGRADED
                     else:
-                        # 5xx but status changed from original — degraded, not full fail
                         outcome = ScenarioOutcome.DEGRADED
                 except http_requests.exceptions.Timeout:
                     twin.clear_chaos()
