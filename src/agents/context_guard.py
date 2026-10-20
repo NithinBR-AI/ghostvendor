@@ -46,7 +46,7 @@ _DANGEROUS_CALLS = {
 _SENSITIVE_PATHS = ["/etc/passwd", "/etc/shadow", "~/.ssh", "~/.aws", ".env"]
 
 # Sandbox startup timeout — just enough to catch import errors and startup crashes
-_SANDBOX_TIMEOUT_SECONDS = 8
+_SANDBOX_TIMEOUT_SECONDS = 30
 
 
 def run(vendor: Vendor, code: str) -> GuardDecision:

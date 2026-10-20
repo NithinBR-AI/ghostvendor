@@ -70,6 +70,25 @@ def _db_finish_run(run_id, status, score_before, score_after, pr_url):
             pass
 
 
+def _db_save_vendor_results(run_id, resilience_report, score_after_by_vendor=None):
+    if not _dash_db or not resilience_report:
+        return
+    try:
+        vendors = [
+            {
+                "vendor_name": vr.vendor_name,
+                "criticality_score": vr.criticality_score,
+                "score_before": vr.resilience_score,
+                "score_after": (score_after_by_vendor or {}).get(vr.vendor_name),
+                "scenarios": [{"mode": s.mode, "outcome": s.outcome.value} for s in vr.scenarios],
+            }
+            for vr in resilience_report.vendor_results
+        ]
+        _dash_db.save_vendor_results(run_id, vendors)
+    except Exception as e:
+        logger.warning("Failed to save vendor_results: %s", e)
+
+
 class State(Enum):
     DISCOVER = auto()
     ATTACK = auto()
@@ -157,6 +176,7 @@ class StateMachine:
                 self._step()
         finally:
             self.twin_manager.stop_all()
+            _db_save_vendor_results(self.run_id, self.artifacts.resilience_report)
             _db_finish_run(
                 self.run_id,
                 "done" if self.state == State.DONE else "failed",

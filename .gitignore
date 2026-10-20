@@ -8,3 +8,5 @@ __pycache__/
 dist/
 .idea/
 scripts/
+*.db
+run_output.log
