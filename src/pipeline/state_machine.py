@@ -741,7 +741,13 @@ def _rescore_patched(
             # cause stale-URL timeouts. twin_env is rebuilt at app boot time per scenario.
             for mode in modes_to_score:
                 orig = original_by_mode.get(mode)
-                twin.clear_chaos()
+                try:
+                    twin.clear_chaos()
+                except Exception:
+                    try:
+                        twin.reset()
+                    except Exception:
+                        pass
                 twin.activate_chaos(mode=mode)
                 fresh_twin_env = {
                     evil_twins[n].base_url_env: twin_manager.get(n).base_url

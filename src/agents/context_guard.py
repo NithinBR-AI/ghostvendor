@@ -180,13 +180,8 @@ def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str, bool]:
     """
     try:
         client = ContreeSync()
-        sandbox = client.images.use("python:3.12-slim")
-
-        # Install deps — Contree caches layers so subsequent runs are fast
-        sandbox = sandbox.run(
-            "pip", args=["install", "-q", "fastapi", "uvicorn[standard]"],
-            disposable=False,
-        ).wait()
+        # Pre-baked image with fastapi+uvicorn already installed
+        sandbox = client.images.use("ghostvendor-sandbox:latest")
 
         # Write the twin code
         sandbox = sandbox.run(
