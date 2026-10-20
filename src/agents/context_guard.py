@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -178,32 +179,40 @@ def _sandbox_execute(code: str, vendor_name: str) -> tuple[int, str, str, bool]:
     Returns:
         (exit_code, stdout, stderr) — exit_code=None if sandbox API unavailable.
     """
-    try:
-        client = ContreeSync()
-        # Pre-baked image with fastapi+uvicorn already installed
-        sandbox = client.images.use("ghostvendor-sandbox:latest")
+    _MAX_ATTEMPTS = 3
+    _RETRY_DELAY = 5  # seconds between attempts
 
-        # Write the twin code
-        sandbox = sandbox.run(
-            "python", args=["-c", f"open('/tmp/twin.py','w').write({repr(code)})"],
-            disposable=False,
-        ).wait()
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            client = ContreeSync()
+            # Pre-baked image with fastapi+uvicorn already installed
+            sandbox = client.images.use("ghostvendor-sandbox:latest")
 
-        # Run with a short timeout — observing startup behavior only, not serving requests
-        result = sandbox.run(
-            "python", args=["/tmp/twin.py"],
-            timeout=_SANDBOX_TIMEOUT_SECONDS,
-        ).wait()
+            # Write the twin code
+            sandbox = sandbox.run(
+                "python", args=["-c", f"open('/tmp/twin.py','w').write({repr(code)})"],
+                disposable=False,
+            ).wait()
 
-        exit_code = result.exit_code
-        # exit_code=-1 means timeout — server started and kept running = healthy startup
-        if exit_code == -1:
-            exit_code = 0
-        return exit_code, result.stdout or "", result.stderr or "", False
+            # Run with a short timeout — observing startup behavior only, not serving requests
+            result = sandbox.run(
+                "python", args=["/tmp/twin.py"],
+                timeout=_SANDBOX_TIMEOUT_SECONDS,
+            ).wait()
 
-    except Exception as e:
-        logger.warning("Sandbox skipped for %s: %s: %s", vendor_name, type(e).__name__, e)
-        return -1, "", f"Sandbox unavailable: {e}", True
+            exit_code = result.exit_code
+            # exit_code=-1 means timeout — server started and kept running = healthy startup
+            if exit_code == -1:
+                exit_code = 0
+            return exit_code, result.stdout or "", result.stderr or "", False
+
+        except Exception as e:
+            logger.warning("Sandbox attempt %d/%d failed for %s: %s: %s", attempt, _MAX_ATTEMPTS, vendor_name, type(e).__name__, e)
+            if attempt < _MAX_ATTEMPTS:
+                time.sleep(_RETRY_DELAY)
+
+    logger.warning("Sandbox skipped for %s after %d attempts", vendor_name, _MAX_ATTEMPTS)
+    return -1, "", "Sandbox unavailable after retries", True
 
 
 def _detect_unexpected_sandbox_output(stdout: str, stderr: str) -> list[str]:
