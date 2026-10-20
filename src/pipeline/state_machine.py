@@ -497,7 +497,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
 
         # Re-score: run only the originally-failed scenarios — measures "did the patch fix what broke",
         # not "does the patched app ace every possible mode including ones it never failed at baseline".
-        score_after = _rescore_patched(
+        score_after, score_after_by_vendor = _rescore_patched(
             patched_files=patched_files,
             repo_info=repo_info,
             evil_twins=self.artifacts.evil_twins,
@@ -507,6 +507,7 @@ Review the diagnoses above and apply the suggested fix strategies manually.
         )
         self.artifacts.resilience_score_after = score_after
         _db_update_score_after(self.run_id, score_after)
+        _db_save_vendor_results(self.run_id, self.artifacts.resilience_report, score_after_by_vendor)
         logger.info(
             "Resilience score: %d/100 -> %d/100 after patch",
             self.artifacts.resilience_score_before, score_after,
@@ -823,21 +824,23 @@ def _rescore_patched(
         pts_map = {SO.PASS: 16, SO.DEGRADED: 8, SO.FAIL: 0}
         total_weight = sum(v.criticality_score for v in vendor_results)
         weighted_sum = 0
+        score_after_by_vendor: dict[str, int] = {}
         for vr in vendor_results:
             baseline_pts = 20 if vr.baseline_passed else 0
             n = max(len(vr.scenarios), 1)
             scenario_pts = sum(pts_map[s.outcome] for s in vr.scenarios)
             scenario_score = int((scenario_pts / (n * 16)) * 80)
             vendor_score = min(100, baseline_pts + scenario_score)
+            score_after_by_vendor[vr.vendor_name] = vendor_score
             logger.info("Rescore: %s -> %d/100 (%d scenarios, baseline=%s)", vr.vendor_name, vendor_score, n, vr.baseline_passed)
             weighted_sum += vendor_score * vr.criticality_score
         score = int(weighted_sum / total_weight) if total_weight else 0
         logger.info("Rescore complete: %d/100", score)
-        return score
+        return score, score_after_by_vendor
 
     except Exception as e:
         logger.warning("Rescore failed (non-blocking): %s", e)
-        return 0
+        return 0, {}
     finally:
         twin_manager.stop_all()
         shutil.rmtree(patched_dir, ignore_errors=True)
