@@ -176,12 +176,11 @@ class StateMachine:
                 self._step()
         finally:
             self.twin_manager.stop_all()
-            _db_save_vendor_results(self.run_id, self.artifacts.resilience_report)
             _db_finish_run(
                 self.run_id,
                 "done" if self.state == State.DONE else "failed",
                 self.artifacts.resilience_score_before or None,
-                self.artifacts.resilience_score_after or None,
+                self.artifacts.resilience_score_after if self.artifacts.resilience_score_after else None,
                 self.artifacts.pr_url or None,
             )
 
@@ -507,7 +506,8 @@ Review the diagnoses above and apply the suggested fix strategies manually.
         )
         self.artifacts.resilience_score_after = score_after
         _db_update_score_after(self.run_id, score_after)
-        _db_save_vendor_results(self.run_id, self.artifacts.resilience_report, score_after_by_vendor)
+        if score_after_by_vendor:
+            _db_save_vendor_results(self.run_id, self.artifacts.resilience_report, score_after_by_vendor)
         logger.info(
             "Resilience score: %d/100 -> %d/100 after patch",
             self.artifacts.resilience_score_before, score_after,
