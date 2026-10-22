@@ -353,7 +353,7 @@ def _tab_live():
             state = _events_to_state(events)
             status = last_run.get("status", "")
             if status == "cancelled":
-                state = {k: ({"status": "cancelled"} if v.get("status") == "active" else v) for k, v in state.items()}
+                state = {}
             repo = last_run.get("repo", "") or ""
             repo_short = repo.split("/")[-1] if "/" in repo else repo
             pr = f"PR #{last_run['pr_number']}" if last_run.get("pr_number") else ""
