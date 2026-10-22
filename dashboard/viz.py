@@ -7,10 +7,11 @@ import json
 _BG = "#0f172a"
 
 _C = {
-    "pending":  {"fill": "#0f1f35", "stroke": "#1e3a5f", "text": "#475569"},
-    "active":   {"fill": "#0c2d4a", "stroke": "#38bdf8", "text": "#7dd3fc"},
-    "complete": {"fill": "#0a2a1f", "stroke": "#34d399", "text": "#6ee7b7"},
-    "failed":   {"fill": "#2a0f0f", "stroke": "#f87171", "text": "#fca5a5"},
+    "pending":   {"fill": "#0f1f35", "stroke": "#1e3a5f", "text": "#475569"},
+    "active":    {"fill": "#0c2d4a", "stroke": "#38bdf8", "text": "#7dd3fc"},
+    "complete":  {"fill": "#0a2a1f", "stroke": "#34d399", "text": "#6ee7b7"},
+    "failed":    {"fill": "#2a0f0f", "stroke": "#f87171", "text": "#fca5a5"},
+    "cancelled": {"fill": "#1a1a2e", "stroke": "#475569", "text": "#64748b"},
 }
 
 _AGENT_META = {
@@ -83,7 +84,7 @@ rg.append("stop").attr("offset","55%").attr("stop-color","#0e4f6e").attr("stop-o
 rg.append("stop").attr("offset","100%").attr("stop-color","{_BG}").attr("stop-opacity","0");
 
 // Glow filters
-["active","complete","failed"].forEach(function(s){{
+["active","complete","failed","cancelled"].forEach(function(s){{
   var f = defs.append("filter").attr("id","gf_"+s)
     .attr("x","-80%").attr("y","-80%").attr("width","260%").attr("height","260%");
   var sd = s==="active"?8:s==="complete"?5:5;
@@ -348,10 +349,10 @@ nodeNames.forEach(function(name){{
     .attr("letter-spacing","0.12em").text(name);
   // Model label below name
   if(meta.model) {{
-    g.append("text").attr("x",p.x).attr("y",p.y+HEX_R+25)
-      .attr("text-anchor","middle").attr("font-size","7.5").attr("font-weight","600")
+    g.append("text").attr("x",p.x).attr("y",p.y+HEX_R+26)
+      .attr("text-anchor","middle").attr("font-size","8").attr("font-weight","600")
       .attr("fill",mc).attr("font-family","JetBrains Mono,monospace")
-      .attr("letter-spacing","0.08em").attr("opacity","0.85").text(meta.model);
+      .attr("letter-spacing","0.06em").attr("opacity","0.9").text(meta.model);
   }}
 }});
 

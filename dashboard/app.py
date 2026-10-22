@@ -103,14 +103,22 @@ def _cancel_pipeline(run_id: str | None = None):
 
     wf_run_id = resp.json()["workflow_runs"][0]["id"]
     cancel_url = f"https://api.github.com/repos/{_GHOSTVENDOR_REPO}/actions/runs/{wf_run_id}/cancel"
-    requests.post(cancel_url, headers=headers)
+    cancel_resp = requests.post(cancel_url, headers=headers)
 
-    # Mark cancelled in DB
-    if run_id:
-        db.finish_run(run_id, "cancelled", None, None, None, "Cancelled by user")
+    if cancel_resp.status_code not in (202, 409):
+        st.toast(f"Cancel failed ({cancel_resp.status_code}). Cancel manually at github.com/NithinBR-AI/ghostvendor/actions", icon="⚠️")
+        return
+
+    # Mark cancelled in DB — re-fetch active run in case it arrived after the button click
+    effective_run_id = run_id or (db.get_active_run() or {}).get("run_id")
+    if effective_run_id:
+        db.finish_run(effective_run_id, "cancelled", None, None, None, "Cancelled by user")
     st.session_state["run_triggered"] = False
     st.session_state["run_seen"] = False
-    st.toast("Pipeline cancelled.", icon="🛑")
+    if cancel_resp.status_code == 409:
+        st.toast("Run already finished — marked cancelled in dashboard.", icon="ℹ️")
+    else:
+        st.toast("Pipeline cancelled.", icon="🛑")
     st.rerun()
 
 st.set_page_config(
@@ -203,6 +211,7 @@ def _pill(status):
         "complete":      ("#22c55e", "rgba(34,197,94,0.10)",  "DONE"),
         "failed":        ("#ef4444", "rgba(239,68,68,0.10)",  "FAILED"),
         "findings_only": ("#f59e0b", "rgba(245,158,11,0.10)", "FINDINGS"),
+        "cancelled":     ("#64748b", "rgba(100,116,139,0.10)", "CANCELLED"),
     }
     col, bg, label = cfg.get(status, ("#8b949e", "rgba(139,148,158,0.12)", status.upper()[:10]))
     return (
@@ -343,6 +352,8 @@ def _tab_live():
             events = db.get_run_events(last_run["run_id"])
             state = _events_to_state(events)
             status = last_run.get("status", "")
+            if status == "cancelled":
+                state = {k: ({"status": "cancelled"} if v.get("status") == "active" else v) for k, v in state.items()}
             repo = last_run.get("repo", "") or ""
             repo_short = repo.split("/")[-1] if "/" in repo else repo
             pr = f"PR #{last_run['pr_number']}" if last_run.get("pr_number") else ""
