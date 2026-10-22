@@ -346,6 +346,13 @@ nodeNames.forEach(function(name){{
     .attr("text-anchor","middle").attr("font-size","9").attr("font-weight","700")
     .attr("fill",c.text).attr("font-family","JetBrains Mono,monospace")
     .attr("letter-spacing","0.12em").text(name);
+  // Model label below name
+  if(meta.model) {{
+    g.append("text").attr("x",p.x).attr("y",p.y+HEX_R+25)
+      .attr("text-anchor","middle").attr("font-size","7.5").attr("font-weight","600")
+      .attr("fill",mc).attr("font-family","JetBrains Mono,monospace")
+      .attr("letter-spacing","0.08em").attr("opacity","0.85").text(meta.model);
+  }}
 }});
 
 // ── SCORES ──

@@ -109,7 +109,7 @@ def run(spec: VendorSpec) -> dict[str, "EvilTwinArtifact"]:
 
 def _generate_twin(vendor: Vendor, repository: str, port: int) -> str:
     """
-    Call Nemotron Super to generate Evil Twin code for a single vendor.
+    Call Nemotron Ultra to generate Evil Twin code for a single vendor.
 
     Args:
         vendor: Single vendor from the VendorSpec.

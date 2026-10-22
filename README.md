@@ -20,14 +20,14 @@ GitHub PR → DISCOVER → ATTACK → GUARD → VERIFY → DIAGNOSE → REMEDIAT
 
 A Python state machine orchestrates six specialized agents in a deterministic closed loop. Each agent owns a distinct responsibility and hands structured artifacts to the next. The LLM never decides what runs next — the orchestrator does. This is intentional: auditability, recoverability, and safety over autonomy.
 
-| # | Agent | Model | Responsibility |
-|---|---|---|---|
-| 1 | Vendor & Repository Detective | Nemotron Ultra | AST scan + Tavily web intel + LLM enrichment — discovers vendors, scores criticality, builds `vendor_spec` |
-| 2 | Adversarial Twin Generator | Nemotron Ultra | Generates Evil Twin — stateful FastAPI mock server with 5 chaos modes per vendor |
-| 3 | Context Guard | Nemotron Nano | Security gate — AST inspection → Contree sandbox execution → LLM policy review (3 layers, in order) |
-| 4 | Resilience Verifier | Nemotron Ultra | Sense→Reason→Act loop: launches twins, injects chaos, observes real app behavior, scores 0–100 |
-| 5 | Runtime Debugger | Nemotron Ultra | Root-cause analysis on all failed scenarios, per vendor |
-| 6 | Patch Generator | DeepSeek-V4-Pro | Generates minimal patch, validates locally against failed scenarios, opens PR only after proof it passes |
+| # | Agent | Model | Responsibility | Why this model |
+|---|---|---|---|---|
+| 1 | Vendor & Repository Detective | Nemotron Ultra | AST scan + Tavily web intel + LLM enrichment — discovers vendors, scores criticality, builds `vendor_spec` | 550B parameters for complex multi-step reasoning: tracing vendor criticality from env vars through source code, grounding scores in Tavily real-world outage data |
+| 2 | Adversarial Twin Generator | Nemotron Ultra | Generates Evil Twin — stateful FastAPI mock server with 5 chaos modes per vendor | Produces the most structurally correct FastAPI code; Super (120B) activates automatically as fallback when Ultra is rate-limited |
+| 3 | Context Guard | Nemotron Nano | Security gate — AST inspection → Contree sandbox execution → LLM policy review (3 layers, in order) | Speed over depth — classifies code intent in ~1s vs 8–12s for Ultra; the task (SAFE/LOW/MEDIUM/HIGH/BLOCKED) is well-suited to a smaller model with tight structured output |
+| 4 | Resilience Verifier | Nemotron Ultra | Sense→Reason→Act loop: launches twins, injects chaos, observes real app behavior, scores 0–100 | Runs multiple LLM calls per pipeline (plan attack, then decide after each scenario); Ultra's instruction-following fidelity prevents cascading hallucinations as tool context grows across 30+ scenarios |
+| 5 | Runtime Debugger | Nemotron Ultra | Root-cause analysis on all failed scenarios, per vendor | Needs to cite specific function names and line numbers from source — requires the reasoning depth of Ultra to produce actionable diagnoses rather than generic guesses |
+| 6 | Patch Generator | DeepSeek-V4-Pro | Generates minimal patch, validates locally against failed scenarios, opens PR only after proof it passes | Patch generation sends 2,000–4,000 tokens of source and expects a complete fixed file back at the same scale; DeepSeek-V4-Pro consistently returns valid JSON at this output length where Ultra occasionally truncates |
 
 ---
 
@@ -434,14 +434,7 @@ These constraints reflect deliberate scoping for the hackathon submission, not f
 
 ### NVIDIA Nemotron Models
 
-GhostVendor uses the full Nemotron tier stack, with each model matched to what that agent actually needs:
-
-| Model | Tier | Agent | Why this model |
-|---|---|---|---|
-| `nvidia/Nemotron-3-Ultra-550b-a55b` | Ultra | A1, A2, A4, A5 | 550B parameters — needed for complex multi-step reasoning: tracing vendor criticality from env vars through source code, planning a chaos attack sequence, making mid-attack Sense→Reason→Act decisions, and producing root-cause diagnoses with specific function names and fix strategies |
-| `nvidia/nemotron-3-super-120b-a12b` | Super | A2 fallback | Activates when Ultra is rate-limited or slow — same Evil Twin generation task at 120B, preserving the 5-mode chaos harness structure |
-| `nvidia/Nemotron-3_5-Lightning` | Nano | A3 | Context Guard needs speed, not depth — Nano processes the security gate in ~1s vs 8–12s for Ultra, and the task (classify code intent as SAFE/LOW/MEDIUM/HIGH/BLOCKED) is well-suited to a smaller model with a tight structured output schema |
-| `deepseek-ai/DeepSeek-V4-Pro` | — | A6 | Patch generation sends the full source file (2,000–4,000 tokens input) and expects a complete fixed file back (same scale output). DeepSeek-V4-Pro on Token Factory consistently returns valid JSON at these token counts where Ultra occasionally truncates |
+GhostVendor uses three models — Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`), Nano (`nvidia/Nemotron-3_5-Lightning`), and DeepSeek-V4-Pro (`deepseek-ai/DeepSeek-V4-Pro`) — with Super (`nvidia/nemotron-3-super-120b-a12b`) as an automatic fallback for Ultra. Per-agent assignment and the reasoning behind each choice is in the [Architecture table](#architecture) above.
 
 **Why Nemotron Ultra over other frontier models for A4:** The Resilience Verifier runs multiple LLM calls in a single pipeline run — one to plan the attack, one mid-attack to decide whether to continue, escalate, or stop after observing each scenario result. Ultra's instruction-following fidelity at each decision point prevents the cascading hallucinations that shorter models produce when the tool context grows large (30+ scenarios across multiple vendors).
 
