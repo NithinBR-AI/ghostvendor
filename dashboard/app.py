@@ -409,6 +409,7 @@ def _tab_live():
 
 
 # ── Tab 2: Run History ────────────────────────────────────────────────────────
+@st.fragment(run_every=30)
 def _tab_history():
     st.markdown(
         "<div style='padding:24px 28px 12px'>"
